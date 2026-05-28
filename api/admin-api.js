@@ -17,25 +17,11 @@ const PUBLIC = {
   key: process.env.BUNNY_ACCESS_KEY || '',
   pull: normalizePullZone(process.env.BUNNY_PULL_ZONE, 'https://vz-72668a20-6b9.b-cdn.net')
 };
-const PUBLIC_SYNC_COLLECTION_ID = (process.env.BUNNY_PUBLIC_SYNC_COLLECTION_ID || '').trim();
-const PUBLIC_SYNC_CATEGORY = (process.env.BUNNY_PUBLIC_SYNC_CATEGORY || 'preview-ever').trim();
-const PUBLIC_SYNC_COLLECTIONS = [
-  { category: 'preview-ever', id: (process.env.BUNNY_PUBLIC_PREVIEW_EVER_COLLECTION_ID || PUBLIC_SYNC_COLLECTION_ID || '').trim() },
-  { category: 'archive', id: (process.env.BUNNY_PUBLIC_ARCHIVE_COLLECTION_ID || '').trim() },
-  { category: 'feature', id: (process.env.BUNNY_PUBLIC_FEATURE_COLLECTION_ID || '').trim() }
-].filter(c => c.category && c.id);
 const PRIVATE = {
   id: process.env.BUNNY_PRIVATE_LIBRARY_ID || '552081',
   key: process.env.BUNNY_PRIVATE_ACCESS_KEY || '',
   pull: normalizePullZone(process.env.BUNNY_PRIVATE_PULL_ZONE, 'https://vz-c69f4e3f-963.b-cdn.net')
 };
-const PRIVATE_SYNC_COLLECTION_ID = (process.env.BUNNY_PRIVATE_SYNC_COLLECTION_ID || '').trim();
-const PRIVATE_SYNC_CATEGORY = (process.env.BUNNY_PRIVATE_SYNC_CATEGORY || 'preview').trim();
-const PRIVATE_SYNC_COLLECTIONS = [
-  { category: 'preview', id: (process.env.BUNNY_PRIVATE_PREVIEW_COLLECTION_ID || PRIVATE_SYNC_COLLECTION_ID || '').trim() },
-  { category: 'full-movie', id: (process.env.BUNNY_PRIVATE_FULL_MOVIE_COLLECTION_ID || '').trim() },
-  { category: 'short-video', id: (process.env.BUNNY_PRIVATE_SHORT_VIDEO_COLLECTION_ID || '').trim() }
-].filter(c => c.category && c.id);
 const STORAGE = {
   name: process.env.BUNNY_STORAGE_NAME || '',
   password: process.env.BUNNY_STORAGE_PASSWORD || '',
@@ -319,14 +305,6 @@ function getQuery(req) {
   return parsed;
 }
 
-function normalizeCollectionId(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-  // Accept plain UUID or path-like values such as "collection/name/<uuid>".
-  const m = raw.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-  return m ? m[0] : raw;
-}
-
 function parseBunnyItemsPayload(data) {
   const parsed = JSON.parse(data || '{}');
   if (Array.isArray(parsed)) return parsed;
@@ -334,32 +312,8 @@ function parseBunnyItemsPayload(data) {
   return [];
 }
 
-async function fetchBunnyVideos({ libraryId, accessKey, collectionId = '' }) {
+async function fetchBunnyVideos({ libraryId, accessKey }) {
   const headers = { 'AccessKey': accessKey, 'accept': 'application/json' };
-  const cleanCollectionId = normalizeCollectionId(collectionId);
-
-  if (cleanCollectionId) {
-    const paths = [
-      `/library/${libraryId}/collections/${encodeURIComponent(cleanCollectionId)}/videos?itemsPerPage=1000&orderBy=date`,
-      `/library/${libraryId}/videos?itemsPerPage=1000&orderBy=date&collection=${encodeURIComponent(cleanCollectionId)}`
-    ];
-
-    for (const p of paths) {
-      const r = await httpsRequest({ hostname: 'video.bunnycdn.com', path: p, method: 'GET', headers });
-      if (r.status === 200) {
-        return {
-          items: parseBunnyItemsPayload(r.data),
-          debug: {
-            collection_requested: String(collectionId || ''),
-            collection_normalized: cleanCollectionId,
-            endpoint_used: p,
-            status: r.status
-          }
-        };
-      }
-    }
-    throw new Error(`Bunny collection fetch failed for ${cleanCollectionId}`);
-  }
 
   const r = await httpsRequest({
     hostname: 'video.bunnycdn.com',
@@ -371,8 +325,6 @@ async function fetchBunnyVideos({ libraryId, accessKey, collectionId = '' }) {
   return {
     items: parseBunnyItemsPayload(r.data),
     debug: {
-      collection_requested: String(collectionId || ''),
-      collection_normalized: '',
       endpoint_used: `/library/${libraryId}/videos?itemsPerPage=1000&orderBy=date`,
       status: r.status
     }
@@ -1124,36 +1076,16 @@ async function actionSyncVideos(req, res, db) {
 
   // ─── Fetch all videos from Bunny Stream (public + private) ───
   let bunnyItems = [];
-  let publicFetchDebug = { collections: [] };
+  let publicFetchDebug = {};
   try {
-    if (PUBLIC_SYNC_COLLECTIONS.length > 0) {
-      for (const c of PUBLIC_SYNC_COLLECTIONS) {
-        const publicFetch = await fetchBunnyVideos({
-          libraryId: PUBLIC.id,
-          accessKey: PUBLIC.key,
-          collectionId: c.id
-        });
-        const taggedItems = (publicFetch.items || []).map(item => ({
-          ...item,
-          __syncCategory: c.category,
-          __syncCollectionId: c.id
-        }));
-        bunnyItems.push(...taggedItems);
-        publicFetchDebug.collections.push({
-          category: c.category,
-          collection_id: c.id,
-          fetch: publicFetch.debug,
-          items_count: taggedItems.length
-        });
-      }
-    } else {
-      // Aucune collection configurée → fetch toute la library publique
-      const publicFetch = await fetchBunnyVideos({ libraryId: PUBLIC.id, accessKey: PUBLIC.key });
-      bunnyItems = (publicFetch.items || []).map(item => ({ ...item, __syncCategory: PUBLIC_SYNC_CATEGORY }));
-      publicFetchDebug.collections.push({ category: PUBLIC_SYNC_CATEGORY, collection_id: null, fetch: publicFetch.debug, items_count: bunnyItems.length });
-    }
+    const publicFetch = await fetchBunnyVideos({ libraryId: PUBLIC.id, accessKey: PUBLIC.key });
+    bunnyItems = publicFetch.items || [];
+    publicFetchDebug = {
+      fetch: publicFetch.debug,
+      mode: 'full-library'
+    };
 
-    // Dedup by Bunny guid in case a video appears in multiple collections.
+    // Dedup by Bunny guid.
     const byGuid = new Map();
     for (const item of bunnyItems) {
       if (!item || !item.guid) continue;
@@ -1161,53 +1093,29 @@ async function actionSyncVideos(req, res, db) {
     }
     bunnyItems = Array.from(byGuid.values());
     publicFetchDebug.total_items_after_dedup = bunnyItems.length;
-    publicFetchDebug.categories = PUBLIC_SYNC_COLLECTIONS.length > 0 ? PUBLIC_SYNC_COLLECTIONS.map(c => c.category) : [PUBLIC_SYNC_CATEGORY];
   } catch (err) {
     console.error('[sync-videos] Bunny fetch error:', err.message);
     return res.status(502).json({ error: `Bunny fetch failed: ${err.message}` });
   }
 
   let bunnyPrivateItems = [];
-  let privateFetchDebug = { collections: [] };
+  let privateFetchDebug = {};
   try {
-    if (PRIVATE_SYNC_COLLECTIONS.length > 0) {
-    for (const c of PRIVATE_SYNC_COLLECTIONS) {
-      const privateFetch = await fetchBunnyVideos({
-        libraryId: PRIVATE.id,
-        accessKey: PRIVATE.key,
-        collectionId: c.id
-      });
-      const taggedItems = (privateFetch.items || []).map(item => ({
-        ...item,
-        __syncCategory: c.category,
-        __syncCollectionId: c.id
-      }));
-      bunnyPrivateItems.push(...taggedItems);
-      privateFetchDebug.collections.push({
-        category: c.category,
-        collection_id: c.id,
-        fetch: privateFetch.debug,
-        items_count: taggedItems.length
-      });
-    }
+    const privateFetch = await fetchBunnyVideos({ libraryId: PRIVATE.id, accessKey: PRIVATE.key });
+    bunnyPrivateItems = privateFetch.items || [];
+    privateFetchDebug = {
+      fetch: privateFetch.debug,
+      mode: 'full-library'
+    };
 
-      // Dedup by Bunny guid in case a video appears in multiple collections.
-      const byGuid = new Map();
-      for (const item of bunnyPrivateItems) {
-        if (!item || !item.guid) continue;
-        if (!byGuid.has(item.guid)) byGuid.set(item.guid, item);
-      }
-      bunnyPrivateItems = Array.from(byGuid.values());
-      privateFetchDebug.total_items_after_dedup = bunnyPrivateItems.length;
-      privateFetchDebug.categories = PRIVATE_SYNC_COLLECTIONS.map(c => c.category);
-    } else {
-      // Aucune collection configurée → fetch toute la library privée
-      const privateFetch = await fetchBunnyVideos({ libraryId: PRIVATE.id, accessKey: PRIVATE.key });
-      bunnyPrivateItems = (privateFetch.items || []).map(item => ({ ...item, __syncCategory: PRIVATE_SYNC_CATEGORY }));
-      privateFetchDebug.collections.push({ category: PRIVATE_SYNC_CATEGORY, collection_id: null, fetch: privateFetch.debug, items_count: bunnyPrivateItems.length });
-      privateFetchDebug.total_items_after_dedup = bunnyPrivateItems.length;
-      privateFetchDebug.categories = [PRIVATE_SYNC_CATEGORY];
+    // Dedup by Bunny guid.
+    const byGuid = new Map();
+    for (const item of bunnyPrivateItems) {
+      if (!item || !item.guid) continue;
+      if (!byGuid.has(item.guid)) byGuid.set(item.guid, item);
     }
+    bunnyPrivateItems = Array.from(byGuid.values());
+    privateFetchDebug.total_items_after_dedup = bunnyPrivateItems.length;
   } catch (err) {
     console.warn('[sync-videos] Private Bunny fetch (non-fatal):', err.message);
     privateFetchDebug = { endpoint_used: null, status: 'error', error: err.message };
@@ -1227,8 +1135,7 @@ async function actionSyncVideos(req, res, db) {
           id: pid,
           formats: {},
           dateCreated: v.dateCreated,
-          category: v.__syncCategory || null,
-          collectionId: v.__syncCollectionId || null
+          category: null,
         };
       }
       projs[pid].formats[fmt] = {
@@ -1238,8 +1145,6 @@ async function actionSyncVideos(req, res, db) {
         length: v.length, width: v.width, height: v.height, size: v.storageSize
       };
       if (new Date(v.dateCreated) > new Date(projs[pid].dateCreated)) projs[pid].dateCreated = v.dateCreated;
-      if (!projs[pid].category && v.__syncCategory) projs[pid].category = v.__syncCategory;
-      if (!projs[pid].collectionId && v.__syncCollectionId) projs[pid].collectionId = v.__syncCollectionId;
     }
     return projs;
   }
@@ -1331,7 +1236,7 @@ async function actionSyncVideos(req, res, db) {
                  last_synced_at, external_updated_at, updated_at)
               VALUES (?, 'video', ?, 'published', ?, ?, ?, 'public', 'sync', ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
         args: [
-          pid, pid, (proj.category || PUBLIC_SYNC_CATEGORY), primaryFormat, JSON.stringify(proj.formats), duration, fileSize,
+          pid, pid, (proj.category || ''), primaryFormat, JSON.stringify(proj.formats), duration, fileSize,
           syncDedupKey, syncDupMatch ? syncDupMatch.id : null, syncDupMatch ? 'duplicate' : null,
           proj.dateCreated, proj.dateCreated
         ]
@@ -1403,7 +1308,7 @@ async function actionSyncVideos(req, res, db) {
                  last_synced_at, external_updated_at, updated_at)
               VALUES (?, 'video', ?, 'published', ?, ?, ?, 'private', 1, 1, 'sync', ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
         args: [
-          pid, pid, (proj.category || PRIVATE_SYNC_CATEGORY), primaryFormat, JSON.stringify(proj.formats), duration, fileSize,
+          pid, pid, (proj.category || ''), primaryFormat, JSON.stringify(proj.formats), duration, fileSize,
           syncDedupKey, syncDupMatch ? syncDupMatch.id : null, syncDupMatch ? 'duplicate' : null,
           proj.dateCreated, proj.dateCreated
         ]
@@ -1423,8 +1328,6 @@ async function actionSyncVideos(req, res, db) {
   // Private items: only remove if private fetch succeeded (non-empty), check against private IDs.
   const publicBunnyIds = new Set(Object.keys(projects));
   const privateBunnyIds = new Set(Object.keys(privateProjects));
-  const publicSyncCategories = new Set(PUBLIC_SYNC_COLLECTIONS.map(c => c.category));
-  const privateSyncCategories = new Set(PRIVATE_SYNC_COLLECTIONS.map(c => c.category));
   const dbVideos = await db.execute({
     sql: "SELECT id, bunny_library, category FROM media_items WHERE type = 'video' AND source_type IN ('upload', 'sync', 'monitor')",
     args: []
@@ -1433,19 +1336,9 @@ async function actionSyncVideos(req, res, db) {
     const lib = row.bunny_library;
     let shouldRemove = false;
     if (lib === 'private') {
-      if (PRIVATE_SYNC_COLLECTIONS.length > 0) {
-        // Safety: when syncing a private subset by collections, only cleanup rows in those sync categories.
-        shouldRemove = privateSyncCategories.has(row.category) && bunnyPrivateItems.length > 0 && !privateBunnyIds.has(row.id);
-      } else {
-        shouldRemove = bunnyPrivateItems.length > 0 && !privateBunnyIds.has(row.id);
-      }
+      shouldRemove = bunnyPrivateItems.length > 0 && !privateBunnyIds.has(row.id);
     } else {
-      if (PUBLIC_SYNC_COLLECTIONS.length > 0) {
-        // Safety: when syncing a public subset by collections, only cleanup rows in those sync categories.
-        shouldRemove = publicSyncCategories.has(row.category) && bunnyItems.length > 0 && !publicBunnyIds.has(row.id);
-      } else {
-        shouldRemove = !publicBunnyIds.has(row.id);
-      }
+      shouldRemove = !publicBunnyIds.has(row.id);
     }
     if (shouldRemove) {
       await db.execute({ sql: 'DELETE FROM media_items WHERE id = ?', args: [row.id] });
