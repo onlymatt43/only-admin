@@ -483,6 +483,7 @@
       <button onclick="refreshQualitySummary()">Rafraichir qualite</button>
     </div>
     <div class="filters">
+      <div id="category-filter-strip" style="display:flex;gap:8px;overflow-x:auto;white-space:nowrap;max-width:100%;padding-bottom:4px;scrollbar-width:thin"></div>
       <div id="tag-filter-strip" style="display:flex;gap:8px;overflow-x:auto;white-space:nowrap;max-width:100%;padding-bottom:4px;scrollbar-width:thin"></div>
       <input type="search" id="filter-search" placeholder="Rechercher..." onkeyup="debounceRefresh()">
       <span class="media-count" id="media-count"></span>
@@ -742,13 +743,20 @@ let titleWasAutoFilled = false;
 let refreshTimer = null;
 const FILTER_BANDS = [
   {
+    id: 'category',
+    containerId: 'category-filter-strip',
+    allLabel: 'Toutes catégories',
+    fixedValues: ['preview', 'archive', 'full-movie', 'short-video', 'clip'],
+    getValues: item => [String(item?.category || '').trim().toLowerCase()].filter(Boolean)
+  },
+  {
     id: 'tags',
     containerId: 'tag-filter-strip',
     allLabel: 'Tous les tags',
     getValues: item => (Array.isArray(item?.tags) ? item.tags : [])
   }
 ];
-let activeBandFilters = { tags: '' };
+let activeBandFilters = { category: '', tags: '' };
 let tagBoxes = [];
 const METADATA_PRESET_KEY = 'admin-console.upload-preset.v1';
 const PROJECTS_API_URL = localStorage.getItem('admin_projects_api_url') || '';
@@ -1426,7 +1434,11 @@ function renderFilterBands() {
     const wrap = document.getElementById(band.containerId);
     if (!wrap) continue;
 
-    const rows = collectBandValues(allMediaItems, band.getValues);
+    const rawRows = collectBandValues(allMediaItems, band.getValues);
+    const countByValue = new Map(rawRows.map(r => [String(r.value || '').toLowerCase(), r.count]));
+    const rows = Array.isArray(band.fixedValues)
+      ? band.fixedValues.map(v => ({ value: v, count: Number(countByValue.get(String(v).toLowerCase()) || 0) }))
+      : rawRows;
     const active = String(activeBandFilters[band.id] || '').trim();
 
     wrap.innerHTML = '';
