@@ -91,6 +91,87 @@ const PREVIEW_CATEGORIES = new Set(['preview', 'preview-ever', 'short-video']);
 const FULL_CATEGORIES = new Set(['full-movie']);
 const VALID_PRICING_MODES = new Set(['a-la-carte', 'subscription', 'both']);
 const VALID_LIFECYCLE_STAGES = new Set(['feature', 'preview-ever', 'archive']);
+const ROUTE_TAG_PREFIX = 'route:';
+
+function parseArraySafe(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_err) {
+    return [];
+  }
+}
+
+function isRouteTag(tag) {
+  return String(tag || '').toLowerCase().startsWith(ROUTE_TAG_PREFIX);
+}
+
+function normalizeRouteTag(tag) {
+  const raw = String(tag || '').trim().toLowerCase();
+  if (!raw) return '';
+  if (!raw.startsWith(ROUTE_TAG_PREFIX)) return '';
+  return raw.replace(/[^a-z0-9:-]/g, '');
+}
+
+function routeTagFromDestination(dest) {
+  const raw = String(dest || '').trim().toLowerCase();
+  if (!raw) return '';
+  if (raw.startsWith('project:')) return normalizeRouteTag(`${ROUTE_TAG_PREFIX}${raw}`);
+  if (raw === 'catalog' || raw === 'main-site') return normalizeRouteTag(`${ROUTE_TAG_PREFIX}${raw}`);
+  return '';
+}
+
+function destinationFromRouteTag(tag) {
+  const norm = normalizeRouteTag(tag);
+  if (!norm) return '';
+  const route = norm.slice(ROUTE_TAG_PREFIX.length);
+  if (route === 'catalog' || route === 'main-site') return route;
+  if (route.startsWith('project:')) return route;
+  return '';
+}
+
+function buildRouteTags({ tags, destinations, route_tags }) {
+  const out = new Set();
+  for (const t of parseArraySafe(tags)) {
+    const norm = normalizeRouteTag(t);
+    if (norm) out.add(norm);
+  }
+  for (const d of parseArraySafe(destinations)) {
+    const routeTag = routeTagFromDestination(d);
+    if (routeTag) out.add(routeTag);
+  }
+  for (const rt of parseArraySafe(route_tags)) {
+    const norm = normalizeRouteTag(rt);
+    if (norm) out.add(norm);
+  }
+  return [...out];
+}
+
+function buildDestinationsFromRouteTags(routeTags) {
+  const out = new Set();
+  for (const tag of parseArraySafe(routeTags)) {
+    const dest = destinationFromRouteTag(tag);
+    if (dest) out.add(dest);
+  }
+  return [...out];
+}
+
+function withRouteFields(item) {
+  const route_tags = buildRouteTags({ tags: item.tags, destinations: item.destinations });
+  const destinations = [...new Set([
+    ...parseArraySafe(item.destinations),
+    ...buildDestinationsFromRouteTags(route_tags)
+  ])];
+  const contentTags = parseArraySafe(item.tags).filter(t => !isRouteTag(t));
+  return {
+    ...item,
+    tags: [...new Set([...contentTags, ...route_tags])],
+    destinations,
+    route_tags,
+  };
+}
 
 function buildValidationWarnings(item) {
   const warnings = [];
@@ -382,7 +463,7 @@ async function actionList(req, res, db) {
 
   const result = await db.execute({ sql, args: params });
   console.log(`[list] ${result.rows.length} rows in ${Date.now() - t0}ms`);
-  const items = result.rows.map(parseRow).map(withValidation).map(signPrivateMediaItem);
+  const items = result.rows.map(parseRow).map(withRouteFields).map(withValidation).map(signPrivateMediaItem);
   res.status(200).json(items);
 }
 
@@ -429,6 +510,9 @@ async function actionUpdate(req, res, db) {
   if (!id) return res.status(400).json({ error: 'Missing ?id= parameter' });
 
   const body = req.body;
+  const existingResult = await db.execute({ sql: 'SELECT * FROM media_items WHERE id = ?', args: [id] });
+  if (existingResult.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+  const existingItem = parseRow(existingResult.rows[0]);
   const fields = [];
   const values = [];
 
@@ -457,8 +541,21 @@ async function actionUpdate(req, res, db) {
     if (body[key] !== undefined) { fields.push(`${key} = ?`); values.push(body[key] ? 1 : 0); }
   }
 
-  for (const key of ['tags', 'formats', 'social_meta', 'destinations']) {
+  for (const key of ['formats', 'social_meta']) {
     if (body[key] !== undefined) { fields.push(`${key} = ?`); values.push(JSON.stringify(body[key])); }
+  }
+
+  if (body.tags !== undefined || body.destinations !== undefined || body.route_tags !== undefined) {
+    const inputTags = body.tags !== undefined ? body.tags : existingItem.tags;
+    const inputDestinations = body.destinations !== undefined ? body.destinations : existingItem.destinations;
+    const routeTags = buildRouteTags({ tags: inputTags, destinations: inputDestinations, route_tags: body.route_tags });
+    const contentTags = parseArraySafe(inputTags).filter(t => !isRouteTag(t));
+    const nextTags = [...new Set([...contentTags, ...routeTags])];
+    const nextDestinations = buildDestinationsFromRouteTags(routeTags);
+    fields.push('tags = ?');
+    values.push(JSON.stringify(nextTags));
+    fields.push('destinations = ?');
+    values.push(JSON.stringify(nextDestinations));
   }
 
   if (body.status !== undefined) { fields.push('status = ?'); values.push(body.status); }
@@ -469,7 +566,7 @@ async function actionUpdate(req, res, db) {
 
   const result = await db.execute({ sql: 'SELECT * FROM media_items WHERE id = ?', args: [id] });
   if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
-  const updatedItem = withValidation(parseRow(result.rows[0]));
+  const updatedItem = withValidation(withRouteFields(parseRow(result.rows[0])));
   notifyDestinations(updatedItem.destinations);
   res.status(200).json(updatedItem);
 }
@@ -695,7 +792,10 @@ async function actionUpload(req, res, db) {
   const qualityLevel = normalizeQualityLevel(body.quality_level || 'draft');
   const sortOrder = Number(body.sort_order) || 0;
   const isFeatured = !!body.is_featured;
-  const destinations = Array.isArray(body.destinations) ? body.destinations : [];
+  const routeTags = buildRouteTags({ tags: body.tags, destinations: body.destinations, route_tags: body.route_tags });
+  const destinations = buildDestinationsFromRouteTags(routeTags);
+  const contentTags = parseArraySafe(body.tags).filter(t => !isRouteTag(t));
+  const persistedTags = [...new Set([...contentTags, ...routeTags])];
 
   let baseId = slugify(title) || 'media';
   let id = baseId;
@@ -748,7 +848,7 @@ async function actionUpload(req, res, db) {
             VALUES (?, 'video', ?, ?, ?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
       args: [
         id, title, body.description || '',
-        JSON.stringify(body.tags || []), body.category || '',
+        JSON.stringify(persistedTags), body.category || '',
         body.date_filmed || null,
         isPrivate ? 1 : 0, isPrivate ? 1 : 0,
         format, JSON.stringify(formats),
@@ -798,7 +898,7 @@ async function actionUpload(req, res, db) {
             VALUES (?, 'photo', ?, ?, ?, ?, ?, 0, 0, 'published', 'upload', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
         args: [
           id, title, body.description || '',
-          JSON.stringify(body.tags || []), body.category || '',
+          JSON.stringify(persistedTags), body.category || '',
           body.date_filmed || null,
           photoStoragePath, buffer.length, body.notes || '', familySlug,
             pricingMode, lifecycleStage, ctaLabel, qualityLevel, sortOrder, isFeatured ? 1 : 0,
@@ -822,7 +922,7 @@ async function actionUpload(req, res, db) {
             VALUES (?, 'photo', ?, ?, ?, ?, ?, 'published', 'link', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
         args: [
           id, title, body.description || '',
-          JSON.stringify(body.tags || []), body.category || '',
+          JSON.stringify(persistedTags), body.category || '',
           body.date_filmed || null,
           body.source_url || '', body.notes || '', familySlug,
             pricingMode, lifecycleStage, ctaLabel, qualityLevel, sortOrder, isFeatured ? 1 : 0,
@@ -1914,17 +2014,19 @@ async function actionByDestination(req, res, db) {
 
   // Sanitize dest to prevent SQL injection via LIKE pattern
   const safeDest = dest.replace(/[%_\\]/g, c => `\\${c}`);
+  const routeTag = normalizeRouteTag(`${ROUTE_TAG_PREFIX}${dest}`);
+  const safeRouteTag = routeTag.replace(/[%_\\]/g, c => `\\${c}`);
 
   const result = await db.execute({
     sql: `SELECT * FROM media_items
           WHERE status = 'published'
-            AND (destinations LIKE ? ESCAPE '\\')
+            AND ((tags LIKE ? ESCAPE '\\') OR (destinations LIKE ? ESCAPE '\\'))
             AND (duplicate_status IS NULL OR duplicate_status != 'duplicate')
           ORDER BY date_filmed DESC, date_uploaded DESC`,
-    args: [`%"${safeDest}"%`]
+    args: [`%"${safeRouteTag}"%`, `%"${safeDest}"%`]
   });
 
-  const items = result.rows.map(parseRow).map(signPrivateMediaItem);
+  const items = result.rows.map(parseRow).map(withRouteFields).map(signPrivateMediaItem);
   res.status(200).json({ dest, count: items.length, items });
 }
 
