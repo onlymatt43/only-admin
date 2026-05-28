@@ -125,6 +125,17 @@ async function ensureTable() {
     )
   `);
 
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS tag_boxes (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      payload TEXT DEFAULT '{}',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
   // Non-destructive migration: add new columns to existing databases.
   // SQLite does not support IF NOT EXISTS on ALTER TABLE, so we catch
   // "duplicate column name" errors and continue.

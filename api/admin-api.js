@@ -178,6 +178,23 @@ function withRouteFields(item) {
   };
 }
 
+function parseTagBoxRow(row) {
+  let payload = {};
+  try {
+    payload = JSON.parse(row.payload || '{}');
+  } catch (_err) {
+    payload = {};
+  }
+  return {
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    payload,
+    created_at: row.created_at || null,
+    updated_at: row.updated_at || null,
+  };
+}
+
 function buildValidationWarnings(item) {
   const warnings = [];
   const type = String(item.type || '').toLowerCase();
@@ -585,6 +602,54 @@ async function actionDelete(req, res, db) {
 
   await db.execute({ sql: 'DELETE FROM media_items WHERE id = ?', args: [id] });
   res.status(200).json({ deleted: true, id, cdnResults });
+}
+
+async function actionTagBoxes(req, res, db) {
+  if (req.method !== 'GET') return res.status(405).json({ error: 'GET only' });
+  const result = await db.execute({
+    sql: 'SELECT id, name, slug, payload, created_at, updated_at FROM tag_boxes ORDER BY name COLLATE NOCASE ASC',
+    args: []
+  });
+  res.status(200).json({ items: result.rows.map(parseTagBoxRow) });
+}
+
+async function actionSaveTagBox(req, res, db) {
+  if (req.method !== 'POST' && req.method !== 'PUT') return res.status(405).json({ error: 'POST or PUT only' });
+  const body = req.body || {};
+  const name = String(body.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'name required' });
+
+  const id = String(body.id || '').trim() || slugify(name) || `box-${Date.now()}`;
+  const slug = normalizeFamilySlug(body.slug || name) || id;
+  const payload = body.payload && typeof body.payload === 'object' ? body.payload : {};
+
+  const exists = await db.execute({ sql: 'SELECT id FROM tag_boxes WHERE id = ?', args: [id] });
+  if (exists.rows.length > 0) {
+    await db.execute({
+      sql: 'UPDATE tag_boxes SET name = ?, slug = ?, payload = ?, updated_at = datetime(\'now\') WHERE id = ?',
+      args: [name, slug, JSON.stringify(payload), id]
+    });
+  } else {
+    await db.execute({
+      sql: 'INSERT INTO tag_boxes (id, name, slug, payload, updated_at) VALUES (?, ?, ?, ?, datetime(\'now\'))',
+      args: [id, name, slug, JSON.stringify(payload)]
+    });
+  }
+
+  const result = await db.execute({
+    sql: 'SELECT id, name, slug, payload, created_at, updated_at FROM tag_boxes WHERE id = ?',
+    args: [id]
+  });
+  if (!result.rows.length) return res.status(500).json({ error: 'Could not save tag box' });
+  res.status(200).json(parseTagBoxRow(result.rows[0]));
+}
+
+async function actionDeleteTagBox(req, res, db) {
+  if (req.method !== 'DELETE') return res.status(405).json({ error: 'DELETE only' });
+  const { id } = getQuery(req);
+  if (!id) return res.status(400).json({ error: 'Missing ?id= parameter' });
+  await db.execute({ sql: 'DELETE FROM tag_boxes WHERE id = ?', args: [id] });
+  res.status(200).json({ deleted: true, id });
 }
 
 // Fetch Open Graph + social card + favicon metadata from a URL.
@@ -1954,6 +2019,9 @@ const ACTIONS = {
   list: actionList,
   update: actionUpdate,
   delete: actionDelete,
+  'tag-boxes': actionTagBoxes,
+  'save-tag-box': actionSaveTagBox,
+  'delete-tag-box': actionDeleteTagBox,
   'import-link': actionImportLink,
   upload: actionUpload,
   'quality-summary': actionQualitySummary,

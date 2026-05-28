@@ -331,6 +331,26 @@
       <textarea id="meta-preset" placeholder='{"title":"...","family_slug":"...","category":"promo","tags":["affiliate"],"route_tags":["route:catalog"],"source_url":"https://...","pricing_mode":"","lifecycle_stage":"","cta_label":"","quality_level":"draft","sort_order":0,"is_private":true,"is_promo":false,"is_featured":false}'></textarea>
     </div>
 
+    <div class="meta-template">
+      <div class="meta-template-head">
+        <div>
+          <h3>Tag Boxes</h3>
+          <p>Boites de métadonnées réutilisables. Applique-les en 1 clic pour accélérer les séries similaires.</p>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <select id="tag-box-select" style="flex:1;min-width:220px;background:#1a1a1a;color:#fff;border:1px solid #333;padding:8px;border-radius:6px">
+          <option value="">— Choisir une Tag Box —</option>
+        </select>
+        <button type="button" class="btn-sm" onclick="applySelectedTagBoxToUpload()">Appliquer</button>
+        <button type="button" class="btn-sm" onclick="saveCurrentAsTagBox()">Sauver box</button>
+        <button type="button" class="btn-sm" onclick="deleteSelectedTagBox()">Supprimer</button>
+      </div>
+      <div style="margin-top:8px">
+        <input type="text" id="tag-box-name" placeholder="Nom de la box (ex: Preview evergreen)" style="width:100%;background:#1a1a1a;color:#fff;border:1px solid #333;padding:8px;border-radius:6px">
+      </div>
+    </div>
+
     <!-- Metadata Form -->
     <div class="meta-form" id="meta-form">
       <h3>Métadonnées</h3>
@@ -686,6 +706,16 @@
           <textarea id="edit-social-note" rows="2" placeholder="ex: Mettre l'accent sur la vitesse, poster le lundi matin…" style="width:100%;box-sizing:border-box;resize:vertical"></textarea>
         </div>
       </div>
+
+      <div class="form-group full">
+        <label>Tag Box</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <select id="edit-tag-box-select" style="flex:1;min-width:220px;background:#1a1a1a;color:#fff;border:1px solid #333;padding:8px;border-radius:6px">
+            <option value="">— Choisir une Tag Box —</option>
+          </select>
+          <button type="button" class="pill-btn" onclick="applySelectedTagBoxToEdit()">Appliquer à ce média</button>
+        </div>
+      </div>
     </div>
   </div>
   <div id="edit-duplicate-section" style="display:none; margin-top:16px; padding:14px 16px; background:rgba(255,170,91,0.08); border:1px solid rgba(255,170,91,0.3); border-radius:8px;">
@@ -726,6 +756,7 @@ let selectedFile = null;
 let selectedFiles = [];
 let titleWasAutoFilled = false;
 let refreshTimer = null;
+let tagBoxes = [];
 const METADATA_PRESET_KEY = 'admin-console.upload-preset.v1';
 const PROJECTS_API_URL = localStorage.getItem('admin_projects_api_url') || '';
 const PHOTO_CDN_BASE_URL = localStorage.getItem('admin_photo_cdn_base_url') || '';
@@ -768,11 +799,13 @@ function doLogout() {
   document.getElementById('login-screen').style.display = 'flex';
   document.getElementById('login-password').value = '';
   document.getElementById('login-error').style.display = 'none';
+  tagBoxes = [];
 }
 
 function showDashboard() {
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('dashboard').style.display = 'block';
+  loadTagBoxes();
   // Show the library immediately. Sync is now explicit via buttons only.
   refreshLibrary();
 }
@@ -1009,6 +1042,163 @@ async function copyMetadataPreset() {
   } catch (error) {
     showToast('Copie impossible dans ce navigateur', true);
   }
+}
+
+function renderTagBoxOptions() {
+  const selects = [
+    document.getElementById('tag-box-select'),
+    document.getElementById('edit-tag-box-select')
+  ].filter(Boolean);
+
+  for (const select of selects) {
+    const current = select.value;
+    select.innerHTML = '<option value="">— Choisir une Tag Box —</option>';
+    for (const box of tagBoxes) {
+      const opt = document.createElement('option');
+      opt.value = box.id;
+      opt.textContent = box.name;
+      select.appendChild(opt);
+    }
+    select.value = tagBoxes.some(b => b.id === current) ? current : '';
+  }
+}
+
+async function loadTagBoxes() {
+  try {
+    const result = await api('/api/admin-api?action=tag-boxes');
+    tagBoxes = Array.isArray(result.items) ? result.items : [];
+    renderTagBoxOptions();
+  } catch (e) {
+    console.warn('Tag boxes load failed:', e.message);
+  }
+}
+
+function getSelectedTagBox(selectId) {
+  const select = document.getElementById(selectId);
+  if (!select) return null;
+  const id = String(select.value || '').trim();
+  if (!id) return null;
+  return tagBoxes.find(b => b.id === id) || null;
+}
+
+function collectTagBoxPayloadFromMetaForm() {
+  return {
+    family_slug: document.getElementById('meta-family').value.trim(),
+    category: document.getElementById('meta-category').value.trim(),
+    description: document.getElementById('meta-description').value,
+    tags: parseTagList(document.getElementById('meta-tags').value),
+    date_filmed: document.getElementById('meta-date-filmed').value || '',
+    format: document.getElementById('meta-format').value || '16x9',
+    notes: document.getElementById('meta-notes').value,
+    source_url: document.getElementById('meta-source-url').value.trim(),
+    pricing_mode: document.getElementById('meta-pricing-mode').value,
+    lifecycle_stage: document.getElementById('meta-lifecycle-stage').value,
+    cta_label: document.getElementById('meta-cta-label').value,
+    quality_level: document.getElementById('meta-quality-level').value,
+    sort_order: Number(document.getElementById('meta-sort-order').value || 0),
+    is_private: document.getElementById('meta-private').checked,
+    is_promo: document.getElementById('meta-promo').checked,
+    is_featured: document.getElementById('meta-featured').checked,
+    route_tags: getRouteTags('meta'),
+  };
+}
+
+function applyTagBoxPayloadToPrefix(prefix, payload = {}, boxSlug = '') {
+  if (!payload || typeof payload !== 'object') return;
+  const p = payload;
+
+  if (p.family_slug !== undefined) document.getElementById(`${prefix}-family`).value = String(p.family_slug || '');
+  if (p.category !== undefined) document.getElementById(`${prefix}-category`).value = String(p.category || '');
+  if (p.description !== undefined) document.getElementById(`${prefix}-description`).value = String(p.description || '');
+  if (p.date_filmed !== undefined) document.getElementById(`${prefix}-date-filmed`).value = String(p.date_filmed || '');
+  if (p.notes !== undefined) document.getElementById(`${prefix}-notes`).value = String(p.notes || '');
+  if (p.source_url !== undefined) document.getElementById(`${prefix}-source-url`).value = String(p.source_url || '');
+  if (p.pricing_mode !== undefined) document.getElementById(`${prefix}-pricing-mode`).value = String(p.pricing_mode || '');
+  if (p.lifecycle_stage !== undefined) document.getElementById(`${prefix}-lifecycle-stage`).value = String(p.lifecycle_stage || '');
+  if (p.cta_label !== undefined) document.getElementById(`${prefix}-cta-label`).value = String(p.cta_label || '');
+  if (p.quality_level !== undefined) document.getElementById(`${prefix}-quality-level`).value = String(p.quality_level || 'draft');
+  if (p.sort_order !== undefined) document.getElementById(`${prefix}-sort-order`).value = String(Number(p.sort_order) || 0);
+
+  const formatEl = document.getElementById(`${prefix}-format`);
+  if (formatEl && p.format !== undefined) formatEl.value = String(p.format || '16x9');
+
+  const privateEl = document.getElementById(`${prefix}-private`);
+  if (privateEl && p.is_private !== undefined) privateEl.checked = !!p.is_private;
+
+  const featuredEl = document.getElementById(`${prefix}-featured`);
+  if (featuredEl && p.is_featured !== undefined) featuredEl.checked = !!p.is_featured;
+
+  const promoEl = document.getElementById(`${prefix}-promo`);
+  if (promoEl && p.is_promo !== undefined) promoEl.checked = !!p.is_promo;
+
+  if (p.route_tags !== undefined) {
+    setRouteTags(prefix, p.route_tags);
+  } else if (p.destinations !== undefined) {
+    setDestinations(prefix, p.destinations);
+  }
+
+  if (p.tags !== undefined) {
+    const existing = parseTagList(document.getElementById(`${prefix}-tags`).value);
+    const incoming = Array.isArray(p.tags) ? p.tags : parseTagList(String(p.tags || ''));
+    const marker = boxSlug ? [`box:${boxSlug}`] : [];
+    const merged = parseTagList([...existing, ...incoming, ...marker].join(', '));
+    document.getElementById(`${prefix}-tags`).value = merged.join(', ');
+  }
+}
+
+async function saveCurrentAsTagBox() {
+  const nameInput = document.getElementById('tag-box-name');
+  const name = String(nameInput?.value || '').trim();
+  if (!name) return showToast('Nom de box requis', true);
+
+  const existing = getSelectedTagBox('tag-box-select');
+  const body = {
+    id: existing ? existing.id : undefined,
+    name,
+    payload: collectTagBoxPayloadFromMetaForm()
+  };
+
+  try {
+    const saved = await api('/api/admin-api?action=save-tag-box', {
+      method: 'POST',
+      body: JSON.stringify(body)
+    });
+    await loadTagBoxes();
+    const uploadSelect = document.getElementById('tag-box-select');
+    if (uploadSelect) uploadSelect.value = saved.id;
+    const editSelect = document.getElementById('edit-tag-box-select');
+    if (editSelect) editSelect.value = saved.id;
+    showToast('Tag Box sauvegardée');
+  } catch (e) {
+    showToast('Erreur tag box: ' + e.message, true);
+  }
+}
+
+async function deleteSelectedTagBox() {
+  const selected = getSelectedTagBox('tag-box-select');
+  if (!selected) return showToast('Choisis une Tag Box à supprimer', true);
+  if (!confirm(`Supprimer la Tag Box "${selected.name}" ?`)) return;
+  try {
+    await api(`/api/admin-api?action=delete-tag-box&id=${encodeURIComponent(selected.id)}`, { method: 'DELETE' });
+    await loadTagBoxes();
+    showToast('Tag Box supprimée');
+  } catch (e) {
+    showToast('Erreur suppression box: ' + e.message, true);
+  }
+}
+
+function applySelectedTagBoxToUpload() {
+  const selected = getSelectedTagBox('tag-box-select');
+  if (!selected) return showToast('Choisis une Tag Box', true);
+  applyTagBoxPayloadToPrefix('meta', selected.payload || {}, selected.slug || selected.id);
+  showToast(`Tag Box appliquée: ${selected.name}`);
+}
+
+function applySelectedTagBoxToEdit() {
+  const selected = getSelectedTagBox('edit-tag-box-select');
+  if (!selected) return showToast('Choisis une Tag Box', true);
+  applyTagBoxPayloadToPrefix('edit', selected.payload || {}, selected.slug || selected.id);
+  showToast(`Tag Box appliquée: ${selected.name}`);
 }
 
 function handleLinkImport() {
