@@ -328,7 +328,7 @@
           <button type="button" class="btn-sm" onclick="copyMetadataPreset()">Copier</button>
         </div>
       </div>
-      <textarea id="meta-preset" placeholder='{"title":"...","family_slug":"...","category":"promo","tags":["affiliate"],"source_url":"https://...","pricing_mode":"","lifecycle_stage":"","cta_label":"","quality_level":"draft","sort_order":0,"is_private":true,"is_promo":false,"is_featured":false}'></textarea>
+      <textarea id="meta-preset" placeholder='{"title":"...","family_slug":"...","category":"promo","tags":["affiliate"],"route_tags":["route:catalog"],"source_url":"https://...","pricing_mode":"","lifecycle_stage":"","cta_label":"","quality_level":"draft","sort_order":0,"is_private":true,"is_promo":false,"is_featured":false}'></textarea>
     </div>
 
     <!-- Metadata Form -->
@@ -917,6 +917,7 @@ function clearForm() {
 }
 
 function getMetadataPresetFields() {
+  const routeTags = getRouteTags('meta');
   return {
     title: document.getElementById('meta-title').value.trim(),
     family_slug: document.getElementById('meta-family').value.trim(),
@@ -935,7 +936,8 @@ function getMetadataPresetFields() {
     is_private: document.getElementById('meta-private').checked,
     is_promo: document.getElementById('meta-promo').checked,
     is_featured: document.getElementById('meta-featured').checked,
-    destinations: getDestinations('meta')
+    route_tags: routeTags,
+    destinations: routeTags.map(routeTagToLegacyDestination).filter(Boolean)
   };
 }
 
@@ -958,10 +960,14 @@ function applyMetadataPresetValues(data = {}) {
   if (data.is_private !== undefined) document.getElementById('meta-private').checked = Boolean(data.is_private);
   if (data.is_promo !== undefined) document.getElementById('meta-promo').checked = Boolean(data.is_promo);
   if (data.is_featured !== undefined) document.getElementById('meta-featured').checked = Boolean(data.is_featured);
-  if (data.destinations !== undefined) setDestinations('meta', data.destinations);
+  if (data.route_tags !== undefined) setRouteTags('meta', data.route_tags);
+  else if (data.destinations !== undefined) setDestinations('meta', data.destinations);
 }
 
 function copyEditingItemToUploadForm() {
+  const routeTags = Array.isArray(editingItem?.route_tags) && editingItem.route_tags.length
+    ? editingItem.route_tags
+    : getRouteTags('edit');
   const uploadPreset = {
     title: document.getElementById('edit-title').value.trim(),
     family_slug: document.getElementById('edit-family').value.trim(),
@@ -980,7 +986,8 @@ function copyEditingItemToUploadForm() {
     is_private: document.getElementById('edit-private').checked,
     is_promo: (document.getElementById('edit-category').value || '').trim().toLowerCase() === 'promo',
     is_featured: document.getElementById('edit-featured').checked,
-    destinations: getDestinations('edit')
+    route_tags: routeTags,
+    destinations: routeTags.map(routeTagToLegacyDestination).filter(Boolean)
   };
 
   const presetInput = document.getElementById('meta-preset');
@@ -1114,6 +1121,7 @@ async function doUpload() {
             is_featured: baseMetadata.is_featured,
             date_filmed: baseMetadata.date_filmed || null,
             notes: baseMetadata.notes,
+            route_tags: baseMetadata.route_tags,
             destinations: baseMetadata.destinations
           })
         });
@@ -1145,6 +1153,7 @@ async function doUpload() {
             is_featured: baseMetadata.is_featured,
             date_filmed: baseMetadata.date_filmed || null,
             notes: baseMetadata.notes,
+            route_tags: baseMetadata.route_tags,
             destinations: baseMetadata.destinations
           })
         });
@@ -1251,33 +1260,70 @@ function applyQuickCategory(inputId, category) {
   input.focus();
 }
 
-// ─── Destinations helpers ───
-function getDestinations(prefix) {
-  const dests = [];
-  if (document.getElementById(`${prefix}-dest-catalog`).checked) dests.push('catalog');
-  if (document.getElementById(`${prefix}-dest-main-site`).checked) dests.push('main-site');
+// ─── Route tags helpers ───
+function normalizeRouteTag(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return '';
+  if (raw.startsWith('route:')) return raw;
+  if (raw.startsWith('project:') || raw === 'catalog' || raw === 'main-site') return `route:${raw}`;
+  return '';
+}
+
+function routeTagToLegacyDestination(routeTag) {
+  const norm = normalizeRouteTag(routeTag);
+  if (!norm) return '';
+  const value = norm.replace(/^route:/, '');
+  if (value === 'catalog' || value === 'main-site') return value;
+  if (value.startsWith('project:')) return value;
+  return '';
+}
+
+function getRouteTags(prefix) {
+  const out = [];
+  if (document.getElementById(`${prefix}-dest-catalog`).checked) out.push('route:catalog');
+  if (document.getElementById(`${prefix}-dest-main-site`).checked) out.push('route:main-site');
   const tags = document.querySelectorAll(`#${prefix}-dest-project-tags .dest-tag`);
-  tags.forEach(tag => dests.push(tag.dataset.dest));
-  return dests;
+  tags.forEach(tag => {
+    const routeTag = normalizeRouteTag(tag.dataset.route || tag.dataset.dest || '');
+    if (routeTag) out.push(routeTag);
+  });
+  return [...new Set(out)];
+}
+
+function getDestinations(prefix) {
+  return getRouteTags(prefix)
+    .map(routeTagToLegacyDestination)
+    .filter(Boolean);
+}
+
+function setRouteTags(prefix, routeTags) {
+  const arr = (Array.isArray(routeTags) ? routeTags : [])
+    .map(normalizeRouteTag)
+    .filter(Boolean);
+  document.getElementById(`${prefix}-dest-catalog`).checked = arr.includes('route:catalog');
+  document.getElementById(`${prefix}-dest-main-site`).checked = arr.includes('route:main-site');
+  const tagsEl = document.getElementById(`${prefix}-dest-project-tags`);
+  tagsEl.innerHTML = '';
+  arr.filter(d => d.startsWith('route:project:')).forEach(d => {
+    const routeValue = d.replace(/^route:/, '');
+    const slug = routeValue.replace('project:', '');
+    _addDestTagEl(prefix, routeValue, slug, tagsEl);
+  });
 }
 
 function setDestinations(prefix, destinations) {
-  const arr = Array.isArray(destinations) ? destinations : [];
-  document.getElementById(`${prefix}-dest-catalog`).checked = arr.includes('catalog');
-  document.getElementById(`${prefix}-dest-main-site`).checked = arr.includes('main-site');
-  const tagsEl = document.getElementById(`${prefix}-dest-project-tags`);
-  tagsEl.innerHTML = '';
-  arr.filter(d => d.startsWith('project:')).forEach(d => {
-    const slug = d.replace('project:', '');
-    _addDestTagEl(prefix, d, slug, tagsEl);
-  });
+  const routeTags = (Array.isArray(destinations) ? destinations : [])
+    .map(v => normalizeRouteTag(v))
+    .filter(Boolean);
+  setRouteTags(prefix, routeTags);
 }
 
 function _addDestTagEl(prefix, dest, label, container) {
   if (!container) container = document.getElementById(`${prefix}-dest-project-tags`);
-  if (container.querySelector(`[data-dest="${CSS.escape(dest)}"]`)) return;
+  if (container.querySelector(`[data-route="${CSS.escape(dest)}"]`)) return;
   const span = document.createElement('span');
   span.className = 'dest-tag pill-btn';
+  span.dataset.route = dest;
   span.dataset.dest = dest;
   span.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:3px 8px';
   const labelNode = document.createTextNode(label);
@@ -1605,7 +1651,11 @@ function openEditPanel(id) {
   document.getElementById('edit-private').checked = !!editingItem.is_private;
   document.getElementById('edit-locked').checked = !!editingItem.is_locked;
   document.getElementById('edit-featured').checked = !!editingItem.is_featured;
-  setDestinations('edit', editingItem.destinations || []);
+  if (Array.isArray(editingItem.route_tags) && editingItem.route_tags.length > 0) {
+    setRouteTags('edit', editingItem.route_tags);
+  } else {
+    setDestinations('edit', editingItem.destinations || []);
+  }
 
   renderValidationWarnings(editingItem.validation_warnings || []);
 
@@ -1663,6 +1713,7 @@ async function doSaveEdit() {
   if (!editingItem) return;
 
   const tags = document.getElementById('edit-tags').value.split(',').map(t => t.trim()).filter(Boolean);
+  const routeTags = getRouteTags('edit');
 
   try {
     await api(`/api/admin-api?action=update&id=${encodeURIComponent(editingItem.id)}`, {
@@ -1686,7 +1737,8 @@ async function doSaveEdit() {
         is_featured: document.getElementById('edit-featured').checked,
         is_private: document.getElementById('edit-private').checked,
         is_locked: document.getElementById('edit-locked').checked,
-        destinations: getDestinations('edit'),
+        route_tags: routeTags,
+        destinations: routeTags.map(routeTagToLegacyDestination).filter(Boolean),
         social_meta: {
           mentions: document.getElementById('edit-social-mentions').value.split(',').map(v => v.trim()).filter(Boolean),
           hashtags: document.getElementById('edit-social-hashtags').value.split(',').map(v => v.trim()).filter(Boolean),
