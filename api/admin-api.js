@@ -1956,17 +1956,22 @@ const ACTIONS = {
   delete: actionDelete,
   'import-link': actionImportLink,
   upload: actionUpload,
-  'migrate-showcase': actionMigrateShowcase,
-  'sync-photos': actionSyncPhotos,
-  'sync-videos': actionSyncVideos,
-  'auto-metadata': actionAutoMetadata,
-  'lifecycle-batch': actionLifecycleBatch,
   'quality-summary': actionQualitySummary,
   analytics: actionAnalytics,
-  'find-duplicates': actionFindDuplicates,
   'resolve-duplicate': actionResolveDuplicate,
   'by-destination': actionByDestination,
 };
+
+// Explicitly retained but disabled from routing.
+const DISABLED_ACTIONS = [
+  actionMigrateShowcase,
+  actionSyncPhotos,
+  actionSyncVideos,
+  actionAutoMetadata,
+  actionLifecycleBatch,
+  actionFindDuplicates,
+];
+void DISABLED_ACTIONS;
 
 module.exports = async (req, res) => {
   corsHeaders(req, res);

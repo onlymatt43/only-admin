@@ -458,37 +458,6 @@
 
   <!-- LIBRARY TAB -->
   <div id="tab-library" class="tab-content">
-    <div class="migrate-banner" id="migrate-banner" style="display:none">
-      <p>Importer les vidéos existantes de showcase_v2.json vers la base de données ?</p>
-      <button onclick="doMigrate()">Migrer vidéos</button>
-    </div>
-    <div class="migrate-banner" id="sync-photos-banner">
-      <p>Synchroniser les photos depuis Bunny Storage ?</p>
-      <button onclick="doSyncPhotos()">Sync photos</button>
-    </div>
-    <div class="migrate-banner" id="sync-videos-banner">
-      <p>Synchroniser les vidéos depuis Bunny Stream ? (importe les vidéos manquantes)</p>
-      <button onclick="doSyncVideos()">Sync vidéos</button>
-    </div>
-    <div class="migrate-banner" id="sync-videos-debug" style="display:none">
-      <p><strong>Debug sync vidéos</strong></p>
-      <pre id="sync-videos-debug-content" style="white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;margin:0;color:#bbb"></pre>
-    </div>
-    <div class="migrate-banner" id="scan-duplicates-banner" style="display:none">
-      <p id="scan-duplicates-text">Scanner la bibliothèque pour détecter les doublons ?</p>
-      <button onclick="doFindDuplicates()">Scan doublons</button>
-    </div>
-    <div class="migrate-banner" id="auto-metadata-banner">
-      <p>Auto-titres + descriptions + famille (accelere le flow editorial)</p>
-      <button onclick="doAutoMetadata()">Auto metadata</button>
-    </div>
-    <div class="migrate-banner" id="lifecycle-banner">
-      <p>Transitions lifecycle (batch)</p>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button onclick="doLifecycleBatch('feature','preview-ever')">feature -> preview-ever</button>
-        <button onclick="doLifecycleBatch('preview-ever','archive')">preview-ever -> archive</button>
-      </div>
-    </div>
     <div class="migrate-banner" id="quality-summary-banner" style="display:none">
       <p id="quality-summary-text">Qualite: analyse en cours...</p>
       <button onclick="refreshQualitySummary()">Rafraichir qualite</button>
@@ -1409,21 +1378,6 @@ async function refreshLibrary() {
     renderTrackingTable();
     renderLibraryQualitySummary();
     document.getElementById('media-count').textContent = `${mediaItems.length} éléments`;
-
-    // Show migrate banner if library is empty
-    document.getElementById('migrate-banner').style.display = mediaItems.length === 0 ? 'flex' : 'none';
-
-    // Show duplicate scan banner if duplicates exist in current list
-    const dupCount = mediaItems.filter(i => i.duplicate_status === 'duplicate').length;
-    const dupBanner = document.getElementById('scan-duplicates-banner');
-    if (dupCount > 0) {
-      dupBanner.style.display = 'flex';
-      document.getElementById('scan-duplicates-text').textContent = `${dupCount} doublon(s) détecté(s) dans la liste. Lancer un scan complet ?`;
-    } else {
-      // Show banner if no filter active (invite initial scan)
-      dupBanner.style.display = (!type && !status && !duplicateFilter) ? 'flex' : 'none';
-      document.getElementById('scan-duplicates-text').textContent = 'Scanner la bibliothèque pour détecter les doublons ?';
-    }
   } catch (e) {
     console.error('Refresh error:', e);
   }
@@ -1466,22 +1420,6 @@ async function refreshQualitySummary() {
     text.textContent = `Qualite (global, videos): ${summary.items_with_warnings}/${summary.total_items} item(s) avec alertes - ${summary.by_level?.warn || 0} warn`;
   } catch (e) {
     showToast('Erreur quality summary: ' + e.message, true);
-  }
-}
-
-async function doLifecycleBatch(fromStage, toStage) {
-  const label = `${fromStage} -> ${toStage}`;
-  if (!confirm(`Appliquer la transition lifecycle ${label} ?`)) return;
-
-  try {
-    const result = await api('/api/admin-api?action=lifecycle-batch', {
-      method: 'POST',
-      body: JSON.stringify({ from_stage: fromStage, to_stage: toStage })
-    });
-    showToast(`Transition ${label}: ${result.updated} mise(s) a jour`);
-    await refreshLibrary();
-  } catch (e) {
-    showToast('Erreur lifecycle batch: ' + e.message, true);
   }
 }
 
@@ -1812,90 +1750,6 @@ async function quickUpdateStatus(id, status) {
   }
 }
 
-// ─── Migration ───
-async function doMigrate() {
-  try {
-    const result = await api('/api/admin-api?action=migrate-showcase', { method: 'POST' });
-    showToast(`Migration: ${result.imported} importés, ${result.skipped} déjà présents`);
-    document.getElementById('migrate-banner').style.display = 'none';
-    refreshLibrary();
-  } catch (e) {
-    showToast('Erreur migration: ' + e.message, true);
-  }
-}
-
-async function doSyncPhotos() {
-  try {
-    const result = await api('/api/admin-api?action=sync-photos', { method: 'POST' });
-    const parts = [];
-    if (result.imported) parts.push(`${result.imported} importées`);
-    if (result.updated_source) parts.push(`${result.updated_source} source maj`);
-    if (result.removed) parts.push(`${result.removed} supprimées`);
-    if (result.unchanged) parts.push(`${result.unchanged} inchangées`);
-    showToast(`Photos: ${parts.join(', ') || 'tout à jour'}`);
-    document.getElementById('sync-photos-banner').style.display = 'none';
-    refreshLibrary();
-  } catch (e) {
-    showToast('Erreur sync photos: ' + e.message, true);
-  }
-}
-
-async function doSyncVideos() {
-  try {
-    const result = await api('/api/admin-api?action=sync-videos', { method: 'POST' });
-    const parts = [];
-    if (result.imported) parts.push(`${result.imported} importées`);
-    if (result.updated_source) parts.push(`${result.updated_source} source maj`);
-    if (result.removed) parts.push(`${result.removed} supprimées`);
-    if (result.unchanged) parts.push(`${result.unchanged} inchangées`);
-    showToast(`Vidéos: ${parts.join(', ') || 'tout à jour'}`);
-    renderSyncVideosDebug(result.sync_debug);
-    document.getElementById('sync-videos-banner').style.display = 'none';
-    refreshLibrary();
-  } catch (e) {
-    showToast('Erreur sync vidéos: ' + e.message, true);
-  }
-}
-
-function renderSyncVideosDebug(syncDebug) {
-  const panel = document.getElementById('sync-videos-debug');
-  const content = document.getElementById('sync-videos-debug-content');
-  if (!panel || !content || !syncDebug) return;
-
-  panel.style.display = 'block';
-  content.textContent = JSON.stringify(syncDebug, null, 2);
-}
-
-async function doFindDuplicates() {
-  try {
-    const result = await api('/api/admin-api?action=find-duplicates', { method: 'POST' });
-    const parts = [];
-    if (result.marked) parts.push(`${result.marked} nouveau(x) doublon(s) marqué(s)`);
-    if (result.already_reviewed) parts.push(`${result.already_reviewed} déjà revus`);
-    if (result.groups_found === 0) {
-      showToast('Aucun doublon détecté');
-    } else {
-      showToast(`${result.groups_found} groupe(s) — ${parts.join(', ')}`);
-    }
-    refreshLibrary();
-  } catch (e) {
-    showToast('Erreur scan doublons: ' + e.message, true);
-  }
-}
-
-async function doAutoMetadata() {
-  const force = confirm('Reecrire les titres meme s\'ils existent deja ?\n\nOK = oui (fort)\nAnnuler = seulement les champs manquants');
-  try {
-    const result = await api('/api/admin-api?action=auto-metadata', {
-      method: 'POST',
-      body: JSON.stringify({ force })
-    });
-    showToast(`Auto metadata: ${result.updated} mis a jour, ${result.unchanged} inchanges, ${result.scanned} analyses`);
-    refreshLibrary();
-  } catch (e) {
-    showToast('Erreur auto metadata: ' + e.message, true);
-  }
-}
 
 async function doResolveDuplicate(action) {
   if (!editingItem) return;
@@ -1925,30 +1779,6 @@ async function doResolveDuplicate(action) {
     } catch (e) {
       showToast('Erreur: ' + e.message, true);
     }
-  }
-}
-
-async function autoSync() {
-  try {
-    const [vResult, pResult] = await Promise.all([
-      api('/api/admin-api?action=sync-videos', { method: 'POST' }),
-      api('/api/admin-api?action=sync-photos', { method: 'POST' })
-    ]);
-    console.log('Auto-sync videos:', vResult);
-    console.log('Auto-sync photos:', pResult);
-    renderSyncVideosDebug(vResult.sync_debug);
-    const changes = [];
-    if (vResult.imported) changes.push(`${vResult.imported} vidéos ajoutées`);
-    if (vResult.updated_source) changes.push(`${vResult.updated_source} vidéos source maj`);
-    if (vResult.removed) changes.push(`${vResult.removed} vidéos supprimées`);
-    if (pResult.imported) changes.push(`${pResult.imported} photos ajoutées`);
-    if (pResult.updated_source) changes.push(`${pResult.updated_source} photos source maj`);
-    if (pResult.removed) changes.push(`${pResult.removed} photos supprimées`);
-    if (changes.length > 0) showToast('Sync: ' + changes.join(', '));
-    else showToast(`Sync OK — ${vResult.bunny_projects || 0} projets vidéo, tout à jour`);
-  } catch (e) {
-    console.error('Auto-sync error:', e);
-    showToast('Erreur auto-sync: ' + e.message, true);
   }
 }
 
