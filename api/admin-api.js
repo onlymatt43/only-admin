@@ -24,11 +24,6 @@ const PUBLIC_SYNC_COLLECTIONS = [
   { category: 'archive', id: (process.env.BUNNY_PUBLIC_ARCHIVE_COLLECTION_ID || '').trim() },
   { category: 'feature', id: (process.env.BUNNY_PUBLIC_FEATURE_COLLECTION_ID || '').trim() }
 ].filter(c => c.category && c.id);
-const EXTERNAL_CATALOG_PREVIEWS_URL = (process.env.EXTERNAL_CATALOG_PREVIEWS_URL || '').trim();
-const EXTERNAL_CATALOG_MOVIES_URL = (process.env.EXTERNAL_CATALOG_MOVIES_URL || '').trim();
-const EXTERNAL_CATALOG_SYNC_CATEGORY = (process.env.EXTERNAL_CATALOG_SYNC_CATEGORY || PUBLIC_SYNC_CATEGORY || 'preview-ever').trim();
-const ENABLE_EXTERNAL_CATALOG_SYNC = String(process.env.ENABLE_EXTERNAL_CATALOG_SYNC || '').trim().toLowerCase() === 'true';
-const EXTERNAL_CATALOG_PRIVATE_COLLECTION_CATEGORIES = new Set(['preview', 'full-movie', 'short-video']);
 const PRIVATE = {
   id: process.env.BUNNY_PRIVATE_LIBRARY_ID || '552081',
   key: process.env.BUNNY_PRIVATE_ACCESS_KEY || '',
@@ -1385,180 +1380,6 @@ async function actionSyncVideos(req, res, db) {
   });
 }
 
-async function actionSyncExternalCatalog(req, res, db) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
-  if (!ENABLE_EXTERNAL_CATALOG_SYNC) {
-    return res.status(403).json({
-      error: 'sync-external-catalog disabled',
-      message: 'Enable ENABLE_EXTERNAL_CATALOG_SYNC=true only for migration/recovery runs.'
-    });
-  }
-
-  function normalizeExternalCatalogPrivateCategory(value, title) {
-    const raw = String(value || '').trim().toLowerCase();
-    if (EXTERNAL_CATALOG_PRIVATE_COLLECTION_CATEGORIES.has(raw)) return raw;
-    const t = String(title || '').toLowerCase();
-    if (raw.includes('preview') || t.includes('preview')) return 'preview';
-    if (raw.includes('short') || t.includes('short')) return 'short-video';
-    return 'full-movie';
-  }
-
-  function extractGuidFromPreviewUrl(url) {
-    try {
-      const u = new URL(String(url || ''));
-      const parts = u.pathname.split('/').filter(Boolean);
-      if (parts.length >= 2) {
-        const candidate = parts[0];
-        if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candidate)) {
-          return candidate;
-        }
-      }
-      return '';
-    } catch (e) {
-      return '';
-    }
-  }
-
-  let payload;
-  let sourceEndpoint = EXTERNAL_CATALOG_PREVIEWS_URL;
-  let usedFallback = false;
-  try {
-    const r = await fetch(EXTERNAL_CATALOG_PREVIEWS_URL, {
-      method: 'GET',
-      headers: { 'accept': 'application/json' }
-    });
-    if (!r.ok) {
-      return res.status(502).json({ error: `External catalog fetch failed: ${r.status}` });
-    }
-    payload = await r.json();
-  } catch (err) {
-    return res.status(502).json({ error: `External catalog fetch failed: ${err.message}` });
-  }
-
-  let previews = Array.isArray(payload?.data) ? payload.data : [];
-  let filtered_out_library = 0;
-
-  // Fallback: some deployments expose preview URLs only via /api/movies.
-  if (previews.length === 0) {
-    try {
-      const r = await fetch(EXTERNAL_CATALOG_MOVIES_URL, {
-        method: 'GET',
-        headers: { 'accept': 'application/json' }
-      });
-      if (r.ok) {
-        const moviesPayload = await r.json();
-        const movies = Array.isArray(moviesPayload?.data) ? moviesPayload.data : [];
-        const privateLibraryMovies = movies.filter(m => String(m?.bunnyLibraryId || '') === String(PRIVATE.id));
-        filtered_out_library = Math.max(0, movies.length - privateLibraryMovies.length);
-        previews = privateLibraryMovies
-          .filter(m => m && m.previewUrl)
-          .map(m => ({
-            id: m.id || m._id || m.bunnyVideoId,
-            title: m.title,
-            category: m.category || '',
-            thumbnailUrl: m.thumbnailUrl || '',
-            previewUrl: m.previewUrl,
-            embedUrl: m.embedUrl || ''
-          }));
-        if (previews.length > 0) {
-          sourceEndpoint = EXTERNAL_CATALOG_MOVIES_URL;
-          usedFallback = true;
-        }
-      }
-    } catch (err) {
-      console.warn('[sync-external-catalog] fallback /api/movies failed:', err.message);
-    }
-  }
-
-  let imported = 0, updated_source = 0, unchanged = 0;
-  const details = [];
-
-  for (const p of previews) {
-    const sourceUrl = String(p?.previewUrl || p?.embedUrl || '').trim();
-    const thumbUrl = String(p?.thumbnailUrl || '').trim();
-    const rawTitle = String(p?.title || '').trim();
-    const normalizedCategory = normalizeExternalCatalogPrivateCategory(p?.category, rawTitle);
-    const extId = String(p?.id || '').trim();
-    const guid = extractGuidFromPreviewUrl(sourceUrl);
-    if (!sourceUrl || !rawTitle) continue;
-
-    const id = `catalog-${slugify(extId || rawTitle) || crypto.createHash('sha1').update(sourceUrl).digest('hex').slice(0, 12)}`;
-    const formatsObj = {
-      '16x9': {
-        bunny_url: sourceUrl,
-        thumbnail_url: thumbUrl,
-        guid,
-        source_url: sourceUrl,
-        site_name: 'external-catalog',
-      }
-    };
-    const formats = JSON.stringify(formatsObj);
-    const dedupKey = guid
-      ? buildDedupKey('video', { guids: [guid] })
-      : buildDedupKey('link', { sourceUrl });
-
-    const existing = await db.execute({
-      sql: 'SELECT id, title, source_url, formats FROM media_items WHERE id = ?',
-      args: [id]
-    });
-
-    if (existing.rows.length > 0) {
-      const row = existing.rows[0];
-      const changed =
-        String(row.title || '') !== rawTitle ||
-        String(row.source_url || '') !== sourceUrl ||
-        String(row.formats || '{}') !== formats;
-
-      if (changed) {
-        await db.execute({
-          sql: `UPDATE media_items
-                SET title = ?, source_url = ?, formats = ?, category = ?, status = 'published',
-                    source_type = 'sync', bunny_library = 'private', is_private = 1, is_locked = 1,
-                    dedup_key = ?,
-                    last_synced_at = datetime('now'), updated_at = datetime('now')
-                WHERE id = ?`,
-          args: [rawTitle, sourceUrl, formats, normalizedCategory, dedupKey, id]
-        });
-        updated_source++;
-        details.push({ id, action: 'updated_source' });
-      } else {
-        await db.execute({
-          sql: `UPDATE media_items
-                SET status = 'published', category = ?, source_type = 'sync', bunny_library = 'private', is_private = 1, is_locked = 1,
-                    dedup_key = ?, last_synced_at = datetime('now')
-                WHERE id = ?`,
-          args: [normalizedCategory, dedupKey, id]
-        });
-        unchanged++;
-      }
-      continue;
-    }
-
-    await db.execute({
-      sql: `INSERT INTO media_items
-              (id, type, title, category, status, source_type, source_url, formats, bunny_library,
-               is_private, is_locked, dedup_key, last_synced_at, updated_at)
-            VALUES (?, 'video', ?, ?, 'published', 'sync', ?, ?, 'private', 1, 1, ?, datetime('now'), datetime('now'))`,
-      args: [id, rawTitle, normalizedCategory, sourceUrl, formats, dedupKey]
-    });
-    imported++;
-    details.push({ id, action: 'imported' });
-  }
-
-  res.status(200).json({
-    source: 'external-catalog',
-    endpoint: sourceEndpoint,
-    used_fallback: usedFallback,
-    private_library_id: PRIVATE.id,
-    filtered_out_library,
-    previews_count: previews.length,
-    imported,
-    updated_source,
-    unchanged,
-    details
-  });
-}
-
 async function actionAutoMetadata(req, res, db) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
 
@@ -2117,7 +1938,6 @@ const ACTIONS = {
   'migrate-showcase': actionMigrateShowcase,
   'sync-photos': actionSyncPhotos,
   'sync-videos': actionSyncVideos,
-  'sync-external-catalog': actionSyncExternalCatalog,
   'auto-metadata': actionAutoMetadata,
   'lifecycle-batch': actionLifecycleBatch,
   'quality-summary': actionQualitySummary,
