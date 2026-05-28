@@ -11,10 +11,7 @@
     "lint:fix": "eslint . --fix",
     "test": "vitest run",
     "test:watch": "vitest",
-    "ci": "npm run lint && npm run test",
-    "db:reset": "node scripts/reset-turso.js",
-    "purge:videos": "node scripts/purge-all-videos.js",
-    "purge:remote": "node scripts/purge-remote-admin.js"
+    "ci": "npm run lint && npm run test"
   },
   "devDependencies": {
     "@eslint/js": "^9.4.0",
