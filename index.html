@@ -483,24 +483,7 @@
       <button onclick="refreshQualitySummary()">Rafraichir qualite</button>
     </div>
     <div class="filters">
-      <select id="filter-type" onchange="refreshLibrary()">
-        <option value="">Tous types</option>
-        <option value="video">Vidéos</option>
-        <option value="photo">Photos</option>
-        <option value="link">Liens</option>
-      </select>
-      <select id="filter-status" onchange="refreshLibrary()">
-        <option value="">Tous statuts</option>
-        <option value="published">Publié</option>
-        <option value="draft">Brouillon</option>
-        <option value="ready">Prêt</option>
-      </select>
-      <select id="filter-duplicate" onchange="refreshLibrary()">
-        <option value="">Tous</option>
-        <option value="duplicate">Doublons</option>
-        <option value="original">Originaux</option>
-        <option value="reviewed">Revus</option>
-      </select>
+      <div id="tag-filter-strip" style="display:flex;gap:8px;overflow-x:auto;white-space:nowrap;max-width:100%;padding-bottom:4px;scrollbar-width:thin"></div>
       <input type="search" id="filter-search" placeholder="Rechercher..." onkeyup="debounceRefresh()">
       <span class="media-count" id="media-count"></span>
     </div>
@@ -751,11 +734,21 @@
 // ─── State ───
 let TOKEN = localStorage.getItem('admin_token') || '';
 let mediaItems = [];
+let allMediaItems = [];
 let editingItem = null;
 let selectedFile = null;
 let selectedFiles = [];
 let titleWasAutoFilled = false;
 let refreshTimer = null;
+const FILTER_BANDS = [
+  {
+    id: 'tags',
+    containerId: 'tag-filter-strip',
+    allLabel: 'Tous les tags',
+    getValues: item => (Array.isArray(item?.tags) ? item.tags : [])
+  }
+];
+let activeBandFilters = { tags: '' };
 let tagBoxes = [];
 const METADATA_PRESET_KEY = 'admin-console.upload-preset.v1';
 const PROJECTS_API_URL = localStorage.getItem('admin_projects_api_url') || '';
@@ -1402,6 +1395,72 @@ function parseTagList(value) {
   return out;
 }
 
+function collectBandValues(items, getValues) {
+  const counts = new Map();
+  for (const item of (Array.isArray(items) ? items : [])) {
+    const values = Array.isArray(getValues(item)) ? getValues(item) : [];
+    for (const value of values) {
+      const clean = String(value || '').trim();
+      if (!clean) continue;
+      counts.set(clean, (counts.get(clean) || 0) + 1);
+    }
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => {
+      if (b[1] !== a[1]) return b[1] - a[1];
+      return a[0].localeCompare(b[0], 'fr', { sensitivity: 'base' });
+    })
+    .map(([value, count]) => ({ value, count }));
+}
+
+function setBandFilter(bandId, value) {
+  const next = String(value || '').trim();
+  const current = String(activeBandFilters[bandId] || '').trim();
+  activeBandFilters[bandId] = current === next ? '' : next;
+  renderFilterBands();
+  refreshLibrary();
+}
+
+function renderFilterBands() {
+  for (const band of FILTER_BANDS) {
+    const wrap = document.getElementById(band.containerId);
+    if (!wrap) continue;
+
+    const rows = collectBandValues(allMediaItems, band.getValues);
+    const active = String(activeBandFilters[band.id] || '').trim();
+
+    wrap.innerHTML = '';
+
+    const allBtn = document.createElement('button');
+    allBtn.type = 'button';
+    allBtn.className = active ? 'pill-btn' : 'pill-btn active';
+    allBtn.textContent = `${band.allLabel} (${allMediaItems.length})`;
+    allBtn.onclick = () => setBandFilter(band.id, '');
+    wrap.appendChild(allBtn);
+
+    for (const row of rows) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = active === row.value ? 'pill-btn active' : 'pill-btn';
+      btn.textContent = `${row.value} (${row.count})`;
+      btn.onclick = () => setBandFilter(band.id, row.value);
+      wrap.appendChild(btn);
+    }
+  }
+}
+
+function itemMatchesBandFilters(item) {
+  for (const band of FILTER_BANDS) {
+    const active = String(activeBandFilters[band.id] || '').trim().toLowerCase();
+    if (!active) continue;
+    const values = (Array.isArray(band.getValues(item)) ? band.getValues(item) : [])
+      .map(v => String(v || '').trim().toLowerCase())
+      .filter(Boolean);
+    if (!values.includes(active)) return false;
+  }
+  return true;
+}
+
 function applyQuickTag(inputId, tag) {
   const input = document.getElementById(inputId);
   if (!input) return;
@@ -1547,27 +1606,32 @@ document.addEventListener('keydown', (event) => {
 
 // ─── Library Tab ───
 async function refreshLibrary() {
-  const type = document.getElementById('filter-type')?.value || '';
-  const status = document.getElementById('filter-status')?.value || '';
   const search = document.getElementById('filter-search')?.value || '';
-  const duplicateFilter = document.getElementById('filter-duplicate')?.value || '';
-
-  const params = new URLSearchParams();
-  if (type === 'link') {
-    params.set('source_type', 'link');
-  } else if (type) {
-    params.set('type', type);
-  }
-  if (status) params.set('status', status);
-  if (search) params.set('search', search);
-  if (duplicateFilter) params.set('duplicate_status', duplicateFilter);
+  const searchNorm = String(search || '').trim().toLowerCase();
 
   try {
-    mediaItems = await api('/api/admin-api?action=list&' + params.toString());
+    allMediaItems = await api('/api/admin-api?action=list');
+    renderFilterBands();
+
+    mediaItems = allMediaItems.filter(item => {
+      if (!itemMatchesBandFilters(item)) return false;
+      if (!searchNorm) return true;
+      const haystack = [
+        item.id,
+        item.title,
+        item.description,
+        item.category,
+        ...(Array.isArray(item.tags) ? item.tags : [])
+      ]
+        .map(v => String(v || '').toLowerCase())
+        .join(' ');
+      return haystack.includes(searchNorm);
+    });
+
     renderMediaGrid();
     renderTrackingTable();
     renderLibraryQualitySummary();
-    document.getElementById('media-count').textContent = `${mediaItems.length} éléments`;
+    document.getElementById('media-count').textContent = `${mediaItems.length}/${allMediaItems.length} éléments`;
   } catch (e) {
     console.error('Refresh error:', e);
   }
