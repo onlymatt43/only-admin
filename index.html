@@ -315,20 +315,17 @@
       <button onclick="clearFileSelection()" style="background:none; border:none; color:#ff6b6b; margin-left:12px; cursor:pointer;">✕ Annuler</button>
     </div>
 
-    <!-- Metadata preset -->
     <div class="meta-template">
       <div class="meta-template-head">
         <div>
-          <h3>Modèle rapide</h3>
-          <p>Copie/colle un bloc de métadonnées, sauvegarde-le dans le navigateur, puis réutilise-le pour une série de vidéos ou un dossier entier.</p>
-        </div>
-        <div class="template-actions">
-          <button type="button" class="btn-sm" onclick="saveMetadataPreset()">Sauver</button>
-          <button type="button" class="btn-sm" onclick="applyMetadataPreset()">Appliquer</button>
-          <button type="button" class="btn-sm" onclick="copyMetadataPreset()">Copier</button>
+          <h3>Assistant upload</h3>
+          <p>Décris ton média en langage naturel, puis le bot remplit automatiquement les champs utiles.</p>
         </div>
       </div>
-      <textarea id="meta-preset" placeholder='{"title":"...","family_slug":"...","category":"promo","tags":["affiliate"],"route_tags":["route:catalog"],"source_url":"https://...","pricing_mode":"","lifecycle_stage":"","cta_label":"","quality_level":"draft","sort_order":0,"is_private":true,"is_promo":false,"is_featured":false}'></textarea>
+      <textarea id="meta-assistant-input" placeholder="Ex: Preview tips ski, famille le-gentil-matt, tags #solo #9x16, route catalog + project:tips, quality ready, cta Voir le film complet"></textarea>
+      <div class="template-actions" style="margin-top:10px">
+        <button type="button" class="btn-sm" onclick="applyAssistantPrompt()">Appliquer le bot</button>
+      </div>
     </div>
 
     <div class="meta-template">
@@ -758,7 +755,6 @@ const FILTER_BANDS = [
 ];
 let activeBandFilters = { category: '', tags: '' };
 let tagBoxes = [];
-const METADATA_PRESET_KEY = 'admin-console.upload-preset.v1';
 const PROJECTS_API_URL = localStorage.getItem('admin_projects_api_url') || '';
 const PHOTO_CDN_BASE_URL = localStorage.getItem('admin_photo_cdn_base_url') || '';
 
@@ -993,9 +989,6 @@ function copyEditingItemToUploadForm() {
     destinations: routeTags.map(routeTagToLegacyDestination).filter(Boolean)
   };
 
-  const presetInput = document.getElementById('meta-preset');
-  presetInput.value = JSON.stringify(uploadPreset, null, 2);
-  localStorage.setItem(METADATA_PRESET_KEY, presetInput.value);
   applyMetadataPresetValues(uploadPreset);
   titleWasAutoFilled = false;
   document.getElementById('meta-form').classList.add('visible');
@@ -1003,46 +996,65 @@ function copyEditingItemToUploadForm() {
   showToast('Infos copiées vers l’upload');
 }
 
-function loadSavedMetadataPreset() {
-  const presetText = localStorage.getItem(METADATA_PRESET_KEY) || '';
-  if (!presetText) return;
-  const presetInput = document.getElementById('meta-preset');
-  if (presetInput && !presetInput.value.trim()) {
-    presetInput.value = presetText;
+function parseAssistantPrompt(raw) {
+  const text = String(raw || '').trim();
+  const lower = text.toLowerCase();
+  const patch = {};
+
+  const categories = ['preview', 'archive', 'full-movie', 'short-video', 'clip', 'feature', 'preview-ever'];
+  for (const c of categories) {
+    if (lower.includes(c)) { patch.category = c; break; }
   }
+
+  if (/(\bprive\b|\bprivé\b|private)/i.test(lower)) patch.is_private = true;
+  if (/(\bpublic\b|publique)/i.test(lower)) patch.is_private = false;
+  if (/\bfeatured\b/i.test(lower)) patch.is_featured = true;
+
+  if (/\bready\b/i.test(lower)) patch.quality_level = 'ready';
+  else if (/\blive\b/i.test(lower)) patch.quality_level = 'live';
+  else if (/\bdraft\b/i.test(lower)) patch.quality_level = 'draft';
+
+  if (/\ba-la-carte\b|\balacarte\b/i.test(lower)) patch.pricing_mode = 'a-la-carte';
+  else if (/\bsubscription\b/i.test(lower)) patch.pricing_mode = 'subscription';
+  else if (/\bboth\b/i.test(lower)) patch.pricing_mode = 'both';
+
+  if (/\bfeature\b/i.test(lower)) patch.lifecycle_stage = 'feature';
+  else if (/\bpreview-ever\b/i.test(lower)) patch.lifecycle_stage = 'preview-ever';
+  else if (/\barchive\b/i.test(lower)) patch.lifecycle_stage = 'archive';
+
+  const hashtags = Array.from(text.matchAll(/#([a-z0-9:-]+)/gi)).map(m => m[1]);
+  if (hashtags.length) patch.tags = hashtags;
+
+  const fam = text.match(/famille\s*[:=]\s*([a-z0-9-_]+)/i);
+  if (fam) patch.family_slug = fam[1];
+
+  const cta = text.match(/cta\s*[:=]\s*([^\n,]+)/i);
+  if (cta) patch.cta_label = cta[1].trim();
+
+  const routeTags = [];
+  if (/\bcatalog\b|\bcatalogue\b/i.test(lower)) routeTags.push('route:catalog');
+  if (/\bmain-site\b|\bsite principal\b/i.test(lower)) routeTags.push('route:main-site');
+  for (const m of text.matchAll(/project\s*:\s*([a-z0-9-]+)/gi)) {
+    routeTags.push(`route:project:${m[1].toLowerCase()}`);
+  }
+  if (routeTags.length) patch.route_tags = [...new Set(routeTags)];
+
+  return patch;
 }
 
-function saveMetadataPreset() {
-  const preset = JSON.stringify(getMetadataPresetFields(), null, 2);
-  const presetInput = document.getElementById('meta-preset');
-  presetInput.value = preset;
-  localStorage.setItem(METADATA_PRESET_KEY, preset);
-  showToast('Modèle sauvegardé');
-}
+function applyAssistantPrompt() {
+  const input = document.getElementById('meta-assistant-input');
+  const raw = String(input?.value || '').trim();
+  if (!raw) return showToast('Décris d\'abord ton média', true);
 
-function applyMetadataPreset() {
-  const presetInput = document.getElementById('meta-preset');
-  const raw = (presetInput.value || localStorage.getItem(METADATA_PRESET_KEY) || '').trim();
-  if (!raw) return showToast('Aucun modèle à appliquer', true);
-  try {
-    const parsed = JSON.parse(raw);
-    applyMetadataPresetValues(parsed);
-    showToast('Modèle appliqué');
-  } catch (error) {
-    showToast('Modèle JSON invalide', true);
+  const patch = parseAssistantPrompt(raw);
+  if (Object.keys(patch).length === 0) {
+    return showToast('Le bot n\'a rien reconnu, ajoute des mots-clés (catégorie, tags #, famille:...)', true);
   }
-}
 
-async function copyMetadataPreset() {
-  const presetInput = document.getElementById('meta-preset');
-  const raw = (presetInput.value || localStorage.getItem(METADATA_PRESET_KEY) || '').trim();
-  if (!raw) return showToast('Aucun modèle à copier', true);
-  try {
-    await navigator.clipboard.writeText(raw);
-    showToast('Modèle copié');
-  } catch (error) {
-    showToast('Copie impossible dans ce navigateur', true);
-  }
+  applyMetadataPresetValues(patch);
+  document.getElementById('meta-form').classList.add('visible');
+  showToast('Champs préremplis par le bot');
 }
 
 function renderTagBoxOptions() {
@@ -1603,8 +1615,6 @@ loadProjectOptions();
 document.getElementById('meta-title').addEventListener('input', () => {
   titleWasAutoFilled = false;
 });
-
-loadSavedMetadataPreset();
 
 document.addEventListener('keydown', (event) => {
   const key = String(event.key || '').toLowerCase();
