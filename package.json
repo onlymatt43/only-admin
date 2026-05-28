@@ -1,0 +1,26 @@
+{
+  "name": "only-admin-main",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone admin panel API and validation tooling",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "ci": "npm run lint && npm run test",
+    "db:reset": "node scripts/reset-turso.js",
+    "purge:videos": "node scripts/purge-all-videos.js"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.4.0",
+    "eslint": "^9.4.0",
+    "express": "^4.21.2",
+    "globals": "^15.3.0",
+    "supertest": "^7.1.1",
+    "vitest": "^2.1.9"
+  }
+}
