@@ -145,6 +145,33 @@
       outline: none;
       border-color: var(--primary);
     }
+    .assistant-status {
+      margin-top: 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: #121212;
+      color: var(--text-secondary);
+      font-size: 12px;
+    }
+    .assistant-status.external {
+      border-color: rgba(34, 197, 94, 0.45);
+      color: #86efac;
+      background: rgba(34, 197, 94, 0.08);
+    }
+    .assistant-status.local {
+      border-color: rgba(245, 158, 11, 0.45);
+      color: #fcd34d;
+      background: rgba(245, 158, 11, 0.08);
+    }
+    .assistant-status.busy {
+      border-color: rgba(91, 170, 255, 0.45);
+      color: #93c5fd;
+      background: rgba(91, 170, 255, 0.08);
+    }
 
     /* Metadata Form */
     .meta-form { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; display: none; }
@@ -359,6 +386,7 @@
       <div class="assistant-quick-grid" id="assistant-quick-grid"></div>
       <textarea id="meta-assistant-input" placeholder="Ex: Preview tips ski, famille le-gentil-matt, tags #solo #9x16, route catalog + project:tips, quality ready, cta Voir le film complet"></textarea>
       <div class="quick-hint">Le texte libre peut etre analyse par l'AI si `OPENAI_API_KEY` est configure. Sinon, le parser local reste actif.</div>
+      <div id="assistant-status" class="assistant-status local">Coach local actif</div>
       <div class="template-actions" style="margin-top:10px">
         <button type="button" class="btn-sm" id="assistant-apply-btn" onclick="applyAssistantPrompt()">Appliquer le bot</button>
         <button type="button" class="btn-sm" onclick="resetAssistantControls()">Reset menus</button>
@@ -885,6 +913,7 @@ function resetAssistantControls() {
     const element = document.getElementById(getAssistantFieldId(field.key));
     if (element) element.value = '';
   }
+  setAssistantStatus({ mode: 'local', message: 'Coach local actif' });
 }
 
 function getAssistantSelections() {
@@ -901,6 +930,16 @@ function setAssistantBusy(isBusy) {
   if (!button) return;
   button.disabled = !!isBusy;
   button.textContent = isBusy ? 'Analyse AI...' : 'Appliquer le bot';
+  if (isBusy) {
+    setAssistantStatus({ mode: 'busy', message: 'Analyse en cours...' });
+  }
+}
+
+function setAssistantStatus({ mode = 'local', message = 'Coach local actif' } = {}) {
+  const status = document.getElementById('assistant-status');
+  if (!status) return;
+  status.className = `assistant-status ${mode}`;
+  status.textContent = message;
 }
 
 // ─── Auth ───
@@ -1229,8 +1268,15 @@ async function requestAssistantPatch(message, selections = {}) {
     })
   });
 
-  if (!result || typeof result.patch !== 'object' || !result.patch) return {};
-  return result.patch;
+  const patch = (result && typeof result.patch === 'object' && result.patch) ? result.patch : {};
+  const confidenceRaw = Number(result?.confidence);
+  return {
+    patch,
+    provider: String(result?.provider || ''),
+    task: String(result?.task || ''),
+    confidence: Number.isFinite(confidenceRaw) ? confidenceRaw : null,
+    message: String(result?.message || ''),
+  };
 }
 
 async function applyAssistantPrompt() {
@@ -1241,13 +1287,18 @@ async function applyAssistantPrompt() {
   const localPromptPatch = raw ? parseAssistantPrompt(raw) : {};
 
   let aiPatch = {};
-  let usedAI = false;
+  let aiMeta = { provider: 'local-parser', confidence: null, task: 'metadata-suggest' };
 
   if (raw) {
     try {
       setAssistantBusy(true);
-      aiPatch = await requestAssistantPatch(raw, selections);
-      usedAI = Object.keys(aiPatch).length > 0;
+      const aiResult = await requestAssistantPatch(raw, selections);
+      aiPatch = aiResult.patch || {};
+      aiMeta = {
+        provider: aiResult.provider || 'external-coach',
+        confidence: aiResult.confidence,
+        task: aiResult.task || 'metadata-suggest'
+      };
     } catch (error) {
       console.warn('Assistant AI unavailable:', error.message);
     } finally {
@@ -1261,12 +1312,28 @@ async function applyAssistantPrompt() {
   );
 
   if (Object.keys(patch).length === 0) {
+    setAssistantStatus({ mode: 'local', message: 'Coach local actif' });
     return showToast('Renseigne au moins un menu ou un texte (catégorie, #tags, famille:...)', true);
   }
 
+  const usedExternalCoach = Object.keys(aiPatch).length > 0;
+  if (usedExternalCoach) {
+    const confidenceText = aiMeta.confidence === null ? '' : ` (${Math.round(aiMeta.confidence * 100)}%)`;
+    setAssistantStatus({ mode: 'external', message: `Coach externe: ${aiMeta.provider}${confidenceText}` });
+  } else {
+    setAssistantStatus({ mode: 'local', message: 'Coach local actif' });
+  }
+
+  console.info('[assistant-coach]', {
+    task: aiMeta.task,
+    provider: usedExternalCoach ? aiMeta.provider : 'local-parser',
+    confidence: aiMeta.confidence,
+    patchKeys: Object.keys(patch)
+  });
+
   applyMetadataPresetValues(patch);
   document.getElementById('meta-form').classList.add('visible');
-  showToast(usedAI ? 'Champs préremplis par l\'AI' : 'Champs préremplis par le bot');
+  showToast(usedExternalCoach ? 'Champs préremplis par le coach externe' : 'Champs préremplis par le bot local');
 }
 
 function renderTagBoxOptions() {
