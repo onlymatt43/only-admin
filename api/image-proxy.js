@@ -1,5 +1,12 @@
 const { isIP } = require('net');
 
+function getAllowedOrigins() {
+  return String(process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map(v => v.trim())
+    .filter(Boolean);
+}
+
 function isPrivateIp(hostname) {
   const ipVersion = isIP(hostname);
   if (!ipVersion) return false;
@@ -32,7 +39,12 @@ function isBlockedHost(hostname) {
 }
 
 module.exports = async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const allowedOrigins = getAllowedOrigins();
+  const origin = String(req.headers?.origin || '').trim();
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
 
   if (req.method === 'OPTIONS') {

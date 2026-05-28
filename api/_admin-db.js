@@ -3,6 +3,21 @@
 
 let tableReady = false;
 
+function getAllowedOrigins() {
+  return String(process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map(v => v.trim())
+    .filter(Boolean);
+}
+
+function parseJsonSafe(value, fallback) {
+  try {
+    return JSON.parse(value || JSON.stringify(fallback));
+  } catch (_err) {
+    return fallback;
+  }
+}
+
 // Direct Turso HTTP API — bypasses @libsql/client entirely
 async function tursoQuery(sql, args = []) {
   const url = process.env.TURSO_DB_URL.replace('libsql://', 'https://');
@@ -166,8 +181,13 @@ function checkAuth(req) {
   return false;
 }
 
-function corsHeaders(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+function corsHeaders(req, res) {
+  const allowedOrigins = getAllowedOrigins();
+  const origin = String(req?.headers?.origin || '').trim();
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
 }
@@ -176,10 +196,10 @@ function corsHeaders(res) {
 function parseRow(row) {
   return {
     ...row,
-    tags: JSON.parse(row.tags || '[]'),
-    formats: JSON.parse(row.formats || '{}'),
-    social_meta: JSON.parse(row.social_meta || '{}'),
-    destinations: JSON.parse(row.destinations || '[]'),
+    tags: parseJsonSafe(row.tags, []),
+    formats: parseJsonSafe(row.formats, {}),
+    social_meta: parseJsonSafe(row.social_meta, {}),
+    destinations: parseJsonSafe(row.destinations, []),
     is_private: row.is_private === 1 || row.is_private === true,
     is_locked: row.is_locked === 1 || row.is_locked === true,
     is_featured: row.is_featured === 1 || row.is_featured === true,

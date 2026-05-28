@@ -13,14 +13,14 @@ function normalizePullZone(value, fallback) {
 
 // ─── Bunny Config ───
 const PUBLIC = {
-  id: process.env.BUNNY_LIBRARY_ID || '581630',
+  id: String(process.env.BUNNY_LIBRARY_ID || '').trim(),
   key: process.env.BUNNY_ACCESS_KEY || '',
-  pull: normalizePullZone(process.env.BUNNY_PULL_ZONE, 'https://vz-72668a20-6b9.b-cdn.net')
+  pull: normalizePullZone(process.env.BUNNY_PULL_ZONE, '')
 };
 const PRIVATE = {
-  id: process.env.BUNNY_PRIVATE_LIBRARY_ID || '552081',
+  id: String(process.env.BUNNY_PRIVATE_LIBRARY_ID || '').trim(),
   key: process.env.BUNNY_PRIVATE_ACCESS_KEY || '',
-  pull: normalizePullZone(process.env.BUNNY_PRIVATE_PULL_ZONE, 'https://vz-c69f4e3f-963.b-cdn.net')
+  pull: normalizePullZone(process.env.BUNNY_PRIVATE_PULL_ZONE, '')
 };
 const STORAGE = {
   name: process.env.BUNNY_STORAGE_NAME || '',
@@ -71,6 +71,25 @@ function normalizeQualityLevel(value) {
   if (!raw) return 'draft';
   if (raw === 'ready' || raw === 'live') return raw;
   return 'draft';
+}
+
+function assertConfig(requiredKeys) {
+  const missing = requiredKeys.filter(k => !String(process.env[k] || '').trim());
+  if (missing.length > 0) {
+    throw new Error(`Missing required env vars: ${missing.join(', ')}`);
+  }
+}
+
+function ensureBunnyVideoConfig(library) {
+  if (library === 'private') {
+    assertConfig(['BUNNY_PRIVATE_LIBRARY_ID', 'BUNNY_PRIVATE_ACCESS_KEY', 'BUNNY_PRIVATE_PULL_ZONE']);
+    return;
+  }
+  assertConfig(['BUNNY_LIBRARY_ID', 'BUNNY_ACCESS_KEY', 'BUNNY_PULL_ZONE']);
+}
+
+function ensureBunnyStorageConfig() {
+  assertConfig(['BUNNY_STORAGE_NAME', 'BUNNY_STORAGE_PASSWORD', 'BUNNY_STORAGE_PULL_ZONE']);
 }
 
 const PREVIEW_CATEGORIES = new Set(['preview', 'preview-ever', 'short-video']);
@@ -538,6 +557,7 @@ async function actionDelete(req, res, db) {
 
   if (query.deleteCdn === 'true') {
     if (item.type === 'video') {
+      ensureBunnyVideoConfig(item.bunny_library === 'private' ? 'private' : 'public');
       const formats = JSON.parse(item.formats || '{}');
       const lib = item.bunny_library === 'private' ? PRIVATE : PUBLIC;
       for (const [, data] of Object.entries(formats)) {
@@ -552,6 +572,7 @@ async function actionDelete(req, res, db) {
         }
       }
     } else if (item.type === 'photo' && item.storage_path) {
+      ensureBunnyStorageConfig();
       const r = await httpsRequest({
         hostname: 'ny.storage.bunnycdn.com',
         path: `/${STORAGE.name}${item.storage_path}`,
@@ -761,6 +782,7 @@ async function actionUpload(req, res, db) {
   const result = { id, type };
 
   if (type === 'video') {
+    ensureBunnyVideoConfig(isPrivate ? 'private' : 'public');
     const lib = isPrivate ? PRIVATE : PUBLIC;
     const bunnyTitle = `${id} (${format})`;
 
@@ -833,6 +855,7 @@ async function actionUpload(req, res, db) {
     const folder = body.isPromo ? '/promo/' : '/';
 
     if (fileData) {
+      ensureBunnyStorageConfig();
       const buffer = Buffer.from(fileData, 'base64');
       await httpsRequest({
         hostname: 'ny.storage.bunnycdn.com',
@@ -949,6 +972,7 @@ async function actionMigrateShowcase(req, res, db) {
 
 async function actionSyncPhotos(req, res, db) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
+  ensureBunnyStorageConfig();
 
   // ─── Fetch listings from Bunny Storage ───
   function fetchBunnyFiles(storageName, password, filePath) {
@@ -1073,6 +1097,8 @@ async function actionSyncPhotos(req, res, db) {
 
 async function actionSyncVideos(req, res, db) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
+  ensureBunnyVideoConfig('public');
+  ensureBunnyVideoConfig('private');
 
   // ─── Fetch all videos from Bunny Stream (public + private) ───
   let bunnyItems = [];
@@ -1943,7 +1969,7 @@ const ACTIONS = {
 };
 
 module.exports = async (req, res) => {
-  corsHeaders(res);
+  corsHeaders(req, res);
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const action = getQuery(req).action;
