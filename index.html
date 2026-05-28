@@ -111,6 +111,40 @@
       line-height: 1.5;
     }
     .meta-template textarea:focus { outline: none; border-color: var(--primary); }
+    .assistant-quick-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(140px, 1fr));
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    @media (max-width: 980px) {
+      .assistant-quick-grid { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+    }
+    @media (max-width: 560px) {
+      .assistant-quick-grid { grid-template-columns: 1fr; }
+    }
+    .assistant-quick-grid label {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .assistant-quick-grid select {
+      width: 100%;
+      padding: 8px 10px;
+      background: var(--background);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: #fff;
+      font-size: 13px;
+    }
+    .assistant-quick-grid select:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
 
     /* Metadata Form */
     .meta-form { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; display: none; }
@@ -319,12 +353,15 @@
       <div class="meta-template-head">
         <div>
           <h3>Assistant upload</h3>
-          <p>Décris ton média en langage naturel, puis le bot remplit automatiquement les champs utiles.</p>
+          <p>Choisis des valeurs ciblées + ajoute ton texte libre. Le bot combine tout en un seul préremplissage.</p>
         </div>
       </div>
+      <div class="assistant-quick-grid" id="assistant-quick-grid"></div>
       <textarea id="meta-assistant-input" placeholder="Ex: Preview tips ski, famille le-gentil-matt, tags #solo #9x16, route catalog + project:tips, quality ready, cta Voir le film complet"></textarea>
+      <div class="quick-hint">Le texte libre peut etre analyse par l'AI si `OPENAI_API_KEY` est configure. Sinon, le parser local reste actif.</div>
       <div class="template-actions" style="margin-top:10px">
-        <button type="button" class="btn-sm" onclick="applyAssistantPrompt()">Appliquer le bot</button>
+        <button type="button" class="btn-sm" id="assistant-apply-btn" onclick="applyAssistantPrompt()">Appliquer le bot</button>
+        <button type="button" class="btn-sm" onclick="resetAssistantControls()">Reset menus</button>
       </div>
     </div>
 
@@ -757,6 +794,114 @@ let activeBandFilters = { category: '', tags: '' };
 let tagBoxes = [];
 const PROJECTS_API_URL = localStorage.getItem('admin_projects_api_url') || '';
 const PHOTO_CDN_BASE_URL = localStorage.getItem('admin_photo_cdn_base_url') || '';
+const ASSISTANT_CATEGORY_VALUES = ['preview', 'full-movie', 'short-video', 'clip', 'archive', 'feature', 'preview-ever'];
+const ASSISTANT_STRUCTURED_FIELDS = [
+  {
+    key: 'visibility',
+    label: 'Visibilite',
+    options: [
+      { value: '', label: 'Auto' },
+      { value: 'private', label: 'Private' },
+      { value: 'public', label: 'Public' }
+    ],
+    toPatch(value) {
+      if (value === 'private') return { is_private: true };
+      if (value === 'public') return { is_private: false };
+      return {};
+    }
+  },
+  {
+    key: 'storage',
+    label: 'Stockage',
+    options: [
+      { value: '', label: 'Auto' },
+      { value: 'bunny-private', label: 'Bunny private' },
+      { value: 'bunny-public', label: 'Bunny public' },
+      { value: 'storage', label: 'Storage' }
+    ],
+    toPatch(value) {
+      if (value === 'bunny-private') return { tags: ['source:bunny-private'], is_private: true };
+      if (value === 'bunny-public') return { tags: ['source:bunny-public'], is_private: false };
+      if (value === 'storage') return { tags: ['source:storage'] };
+      return {};
+    }
+  },
+  {
+    key: 'category',
+    label: 'Categorie',
+    options: [
+      { value: '', label: 'Auto' },
+      ...ASSISTANT_CATEGORY_VALUES.map(value => ({ value, label: value }))
+    ],
+    toPatch(value) {
+      return value ? { category: value } : {};
+    }
+  },
+  {
+    key: 'format',
+    label: 'Format',
+    options: [
+      { value: '', label: 'Auto' },
+      { value: '9x16', label: '9:16' },
+      { value: '16x9', label: '16:9' },
+      { value: '1x1', label: '1:1' }
+    ],
+    toPatch(value) {
+      return value ? { format: value } : {};
+    }
+  }
+];
+
+function getAssistantFieldId(key) {
+  return `assistant-${key}`;
+}
+
+function renderAssistantControls() {
+  const container = document.getElementById('assistant-quick-grid');
+  if (!container) return;
+
+  container.innerHTML = '';
+  for (const field of ASSISTANT_STRUCTURED_FIELDS) {
+    const label = document.createElement('label');
+    label.textContent = field.label;
+
+    const select = document.createElement('select');
+    select.id = getAssistantFieldId(field.key);
+
+    for (const option of field.options) {
+      const opt = document.createElement('option');
+      opt.value = option.value;
+      opt.textContent = option.label;
+      select.appendChild(opt);
+    }
+
+    label.appendChild(select);
+    container.appendChild(label);
+  }
+}
+
+function resetAssistantControls() {
+  for (const field of ASSISTANT_STRUCTURED_FIELDS) {
+    const element = document.getElementById(getAssistantFieldId(field.key));
+    if (element) element.value = '';
+  }
+}
+
+function getAssistantSelections() {
+  const selections = {};
+  for (const field of ASSISTANT_STRUCTURED_FIELDS) {
+    const value = String(document.getElementById(getAssistantFieldId(field.key))?.value || '').trim();
+    if (value) selections[field.key] = value;
+  }
+  return selections;
+}
+
+function setAssistantBusy(isBusy) {
+  const button = document.getElementById('assistant-apply-btn');
+  if (!button) return;
+  button.disabled = !!isBusy;
+  button.textContent = isBusy ? 'Analyse AI...' : 'Appliquer le bot';
+}
 
 // ─── Auth ───
 function api(url, options = {}) {
@@ -802,6 +947,7 @@ function doLogout() {
 function showDashboard() {
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('dashboard').style.display = 'block';
+  renderAssistantControls();
   loadTagBoxes();
   // Show the library immediately. Sync is now explicit via buttons only.
   refreshLibrary();
@@ -1001,8 +1147,7 @@ function parseAssistantPrompt(raw) {
   const lower = text.toLowerCase();
   const patch = {};
 
-  const categories = ['preview', 'archive', 'full-movie', 'short-video', 'clip', 'feature', 'preview-ever'];
-  for (const c of categories) {
+  for (const c of ASSISTANT_CATEGORY_VALUES) {
     if (lower.includes(c)) { patch.category = c; break; }
   }
 
@@ -1042,19 +1187,86 @@ function parseAssistantPrompt(raw) {
   return patch;
 }
 
-function applyAssistantPrompt() {
+function getAssistantStructuredPatch() {
+  let patch = {};
+  for (const field of ASSISTANT_STRUCTURED_FIELDS) {
+    const value = String(document.getElementById(getAssistantFieldId(field.key))?.value || '').trim();
+    if (!value) continue;
+    patch = mergeAssistantPatches(patch, field.toPatch(value));
+  }
+  return patch;
+}
+
+function mergeAssistantPatches(promptPatch = {}, structuredPatch = {}) {
+  const merged = { ...promptPatch, ...structuredPatch };
+
+  const tags = [
+    ...(Array.isArray(promptPatch.tags) ? promptPatch.tags : []),
+    ...(Array.isArray(structuredPatch.tags) ? structuredPatch.tags : [])
+  ];
+  if (tags.length) merged.tags = [...new Set(tags)];
+
+  const routeTags = [
+    ...(Array.isArray(promptPatch.route_tags) ? promptPatch.route_tags : []),
+    ...(Array.isArray(structuredPatch.route_tags) ? structuredPatch.route_tags : [])
+  ];
+  if (routeTags.length) merged.route_tags = [...new Set(routeTags)];
+
+  return merged;
+}
+
+async function requestAssistantPatch(message, selections = {}) {
+  const result = await api('/api/admin-coach', {
+    method: 'POST',
+    body: JSON.stringify({
+      task: 'metadata-suggest',
+      mode: 'upload-assistant',
+      message,
+      selections,
+      context: {
+        categories: ASSISTANT_CATEGORY_VALUES
+      }
+    })
+  });
+
+  if (!result || typeof result.patch !== 'object' || !result.patch) return {};
+  return result.patch;
+}
+
+async function applyAssistantPrompt() {
   const input = document.getElementById('meta-assistant-input');
   const raw = String(input?.value || '').trim();
-  if (!raw) return showToast('Décris d\'abord ton média', true);
+  const selections = getAssistantSelections();
+  const structuredPatch = getAssistantStructuredPatch();
+  const localPromptPatch = raw ? parseAssistantPrompt(raw) : {};
 
-  const patch = parseAssistantPrompt(raw);
+  let aiPatch = {};
+  let usedAI = false;
+
+  if (raw) {
+    try {
+      setAssistantBusy(true);
+      aiPatch = await requestAssistantPatch(raw, selections);
+      usedAI = Object.keys(aiPatch).length > 0;
+    } catch (error) {
+      console.warn('Assistant AI unavailable:', error.message);
+    } finally {
+      setAssistantBusy(false);
+    }
+  }
+
+  const patch = mergeAssistantPatches(
+    mergeAssistantPatches(localPromptPatch, aiPatch),
+    structuredPatch
+  );
+
   if (Object.keys(patch).length === 0) {
-    return showToast('Le bot n\'a rien reconnu, ajoute des mots-clés (catégorie, tags #, famille:...)', true);
+    return showToast('Renseigne au moins un menu ou un texte (catégorie, #tags, famille:...)', true);
   }
 
   applyMetadataPresetValues(patch);
   document.getElementById('meta-form').classList.add('visible');
-  showToast('Champs préremplis par le bot');
+  showToast(usedAI ? 'Champs préremplis par l\'AI' : 'Champs préremplis par le bot');
 }
 
 function renderTagBoxOptions() {
