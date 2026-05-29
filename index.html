@@ -854,22 +854,6 @@ const ASSISTANT_STRUCTURED_FIELDS = [
     }
   },
   {
-    key: 'storage',
-    label: 'Stockage',
-    options: [
-      { value: '', label: 'Auto' },
-      { value: 'bunny-private', label: 'Bunny private' },
-      { value: 'bunny-public', label: 'Bunny public' },
-      { value: 'storage', label: 'Storage' }
-    ],
-    toPatch(value) {
-      if (value === 'bunny-private') return { tags: ['source:bunny-private'], is_private: true };
-      if (value === 'bunny-public') return { tags: ['source:bunny-public'], is_private: false };
-      if (value === 'storage') return { tags: ['source:storage'] };
-      return {};
-    }
-  },
-  {
     key: 'category',
     label: 'Categorie',
     options: [
