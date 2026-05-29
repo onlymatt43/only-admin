@@ -388,14 +388,18 @@
       <div class="meta-template-head">
         <div>
           <h3>Assistant upload</h3>
-          <p>Question 1 obligatoire: Prive/Public. Ensuite choisis des valeurs ciblees + ajoute ton texte libre.</p>
+          <p>Coach conversationnel: reponds a chaque question avec nothing, do it, ou ton texte.</p>
         </div>
       </div>
-      <div class="assistant-quick-grid" id="assistant-quick-grid"></div>
-      <textarea id="meta-assistant-input" placeholder="Ex: Preview tips ski, famille le-gentil-matt, tags #solo #9x16, route catalog + project:tips, quality ready, cta Voir le film complet"></textarea>
+      <div class="assistant-quick-grid" id="assistant-quick-grid" style="display:none"></div>
+      <div id="coach-chat-question" class="assistant-status local" style="margin-bottom:10px;display:flex">Question 1/9 - Visibilite: prive ou public ?</div>
+      <textarea id="meta-assistant-input" placeholder="Reponse COACH... (Entrée = envoyer, Shift+Entrée = nouvelle ligne)"></textarea>
       <div class="quick-hint">Le texte libre peut etre analyse par l'AI si `OPENAI_API_KEY` est configure. Sinon, le parser local reste actif.</div>
       <div id="assistant-status" class="assistant-status local">Coach local actif</div>
       <div class="template-actions" style="margin-top:10px">
+        <button type="button" class="btn-sm" onclick="skipCoachQuestion()">Nothing</button>
+        <button type="button" class="btn-sm" onclick="doItCoachQuestion()">Do it</button>
+        <button type="button" class="btn-sm" onclick="submitCoachChatAnswer()">Envoyer</button>
         <button type="button" class="btn-sm" onclick="resetAssistantControls()">Reset menus</button>
       </div>
     </div>
@@ -837,6 +841,20 @@ let tagBoxes = [];
 const PROJECTS_API_URL = localStorage.getItem('admin_projects_api_url') || '';
 const PHOTO_CDN_BASE_URL = localStorage.getItem('admin_photo_cdn_base_url') || '';
 const ASSISTANT_CATEGORY_VALUES = ['preview', 'full-movie', 'short-video', 'clip', 'archive', 'feature', 'preview-ever'];
+const COACH_UPLOAD_DRAFT_KEY = 'only_admin_upload_coach_v1';
+const COACH_UPLOAD_STEPS = [
+  { id: 'visibility', label: 'Visibilite', question: 'Prive ou Public ?', required: true },
+  { id: 'title', label: 'Titre', question: 'Quel est le titre ?', required: false },
+  { id: 'category', label: 'Categorie', question: 'Quelle categorie ?', required: false },
+  { id: 'description', label: 'Description', question: 'Description courte ?', required: false },
+  { id: 'tags', label: 'Tags', question: 'Quels tags ?', required: false },
+  { id: 'family', label: 'Famille', question: 'Quelle famille ?', required: false },
+  { id: 'diffusion', label: 'Diffusion', question: 'Ou diffuser ? (videotheque, catalog, main-site, project:slug)', required: false },
+  { id: 'date', label: 'Date', question: 'Date de tournage ? (AAAA-MM-JJ)', required: false },
+  { id: 'advanced', label: 'Avance', question: 'Infos avancees ? (pricing, lifecycle, cta, qualite, etc.)', required: false },
+];
+let coachUploadStepIndex = 0;
+let coachVisibilityChosen = false;
 const ASSISTANT_STRUCTURED_FIELDS = [
   {
     key: 'visibility',
@@ -902,7 +920,11 @@ function resetAssistantControls() {
     const element = document.getElementById(getAssistantFieldId(field.key));
     if (element) element.value = '';
   }
+  coachUploadStepIndex = 0;
+  coachVisibilityChosen = false;
+  localStorage.removeItem(COACH_UPLOAD_DRAFT_KEY);
   setAssistantStatus({ mode: 'local', message: 'Coach local actif' });
+  renderCoachChatQuestion();
 }
 
 function getAssistantSelections() {
@@ -932,7 +954,7 @@ function setupAssistantInput() {
   input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
-      applyAssistantPrompt();
+      submitCoachChatAnswer();
     }
   });
 
@@ -1012,6 +1034,286 @@ function hasVisibilitySelection(selections = {}, patches = []) {
   return false;
 }
 
+function getCoachStep() {
+  return COACH_UPLOAD_STEPS[coachUploadStepIndex] || null;
+}
+
+function renderCoachChatQuestion() {
+  const el = document.getElementById('coach-chat-question');
+  if (!el) return;
+  const step = getCoachStep();
+  if (!step) {
+    el.textContent = 'Coach termine. Tu peux uploader ou continuer a ajuster.';
+    return;
+  }
+  el.textContent = `Question ${coachUploadStepIndex + 1}/${COACH_UPLOAD_STEPS.length} - ${step.label}: ${step.question}`;
+}
+
+function getFileStemForCoach() {
+  const file = selectedFiles[0] || selectedFile;
+  if (!file || !file.name) return '';
+  return String(file.name).replace(/\.[^/.]+$/, '').replace(/\s*\(\d+x\d+\)\s*/, '').trim();
+}
+
+function normalizeVisibilityAnswer(raw) {
+  const value = String(raw || '').trim().toLowerCase();
+  if (!value) return null;
+  if (/^(private|prive|priv[eé])$/.test(value) || /\b(private|prive|priv[eé])\b/.test(value)) return true;
+  if (/^(public|publique)$/.test(value) || /\b(public|publique)\b/.test(value)) return false;
+  return null;
+}
+
+function saveCoachDraft() {
+  try {
+    localStorage.setItem(COACH_UPLOAD_DRAFT_KEY, JSON.stringify({
+      stepIndex: coachUploadStepIndex,
+      visibilityChosen: coachVisibilityChosen,
+      metadata: getMetadataPresetFields(),
+    }));
+  } catch (_err) {}
+}
+
+function restoreCoachDraft() {
+  try {
+    const raw = localStorage.getItem(COACH_UPLOAD_DRAFT_KEY);
+    if (!raw) {
+      renderCoachChatQuestion();
+      return;
+    }
+    const draft = JSON.parse(raw);
+    if (draft && typeof draft === 'object') {
+      if (draft.metadata && typeof draft.metadata === 'object') {
+        applyMetadataPresetValues(draft.metadata);
+      }
+      coachUploadStepIndex = Math.max(0, Math.min(COACH_UPLOAD_STEPS.length - 1, Number(draft.stepIndex) || 0));
+      coachVisibilityChosen = !!draft.visibilityChosen;
+    }
+  } catch (_err) {}
+  renderCoachChatQuestion();
+}
+
+async function requestCoachPatchForStep(step, message) {
+  const selections = {
+    visibility: coachVisibilityChosen
+      ? (document.getElementById('meta-private').checked ? 'private' : 'public')
+      : '',
+    coach_step: step.id,
+  };
+  try {
+    const aiResult = await requestAssistantPatch(message, selections);
+    return aiResult.patch || {};
+  } catch (_err) {
+    return {};
+  }
+}
+
+async function applyCoachTextAnswer(step, rawAnswer) {
+  const answer = String(rawAnswer || '').trim();
+  if (!step) return false;
+
+  if (step.id === 'visibility') {
+    const parsed = normalizeVisibilityAnswer(answer);
+    if (parsed === null) {
+      showToast('Reponds Prive ou Public pour la visibilite.', true);
+      return false;
+    }
+    document.getElementById('meta-private').checked = parsed;
+    coachVisibilityChosen = true;
+    return true;
+  }
+
+  if (step.id === 'title') {
+    document.getElementById('meta-title').value = answer;
+    return true;
+  }
+
+  if (step.id === 'category') {
+    document.getElementById('meta-category').value = answer.toLowerCase();
+    return true;
+  }
+
+  if (step.id === 'description') {
+    document.getElementById('meta-description').value = answer;
+    return true;
+  }
+
+  if (step.id === 'tags') {
+    const parsed = parseAssistantPrompt(answer);
+    const tags = Array.isArray(parsed.tags) && parsed.tags.length
+      ? parsed.tags
+      : parseTagList(answer.replace(/#/g, ''));
+    document.getElementById('meta-tags').value = tags.join(', ');
+    return true;
+  }
+
+  if (step.id === 'family') {
+    document.getElementById('meta-family').value = answer;
+    return true;
+  }
+
+  if (step.id === 'diffusion') {
+    const parsed = parseAssistantPrompt(answer);
+    if (!Array.isArray(parsed.route_tags) || parsed.route_tags.length === 0) {
+      showToast('Diffusion: utilise videotheque, catalog, main-site ou project:slug.', true);
+      return false;
+    }
+    setRouteTags('meta', parsed.route_tags);
+    return true;
+  }
+
+  if (step.id === 'date') {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(answer)) {
+      document.getElementById('meta-date-filmed').value = answer;
+      return true;
+    }
+    if (/^(today|aujourd'hui|auj)$/i.test(answer)) {
+      const now = new Date();
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, '0');
+      const dd = String(now.getDate()).padStart(2, '0');
+      document.getElementById('meta-date-filmed').value = `${yyyy}-${mm}-${dd}`;
+      return true;
+    }
+    showToast('Date attendue: AAAA-MM-JJ.', true);
+    return false;
+  }
+
+  if (step.id === 'advanced') {
+    const aiPatch = await requestCoachPatchForStep(step, answer);
+    if (Object.keys(aiPatch).length === 0) return true;
+    applyMetadataPresetValues(aiPatch);
+    return true;
+  }
+
+  return true;
+}
+
+async function applyCoachDoIt(step) {
+  if (!step) return false;
+
+  if (step.id === 'visibility') {
+    document.getElementById('meta-private').checked = false;
+    coachVisibilityChosen = true;
+    return true;
+  }
+
+  if (step.id === 'title') {
+    const current = String(document.getElementById('meta-title').value || '').trim();
+    document.getElementById('meta-title').value = current || getFileStemForCoach() || 'Sans titre';
+    return true;
+  }
+
+  if (step.id === 'category') {
+    const current = String(document.getElementById('meta-category').value || '').trim();
+    document.getElementById('meta-category').value = current || 'preview';
+    return true;
+  }
+
+  if (step.id === 'description') {
+    const aiPatch = await requestCoachPatchForStep(step, 'Propose une description courte pertinente pour cet upload.');
+    if (aiPatch.description) {
+      document.getElementById('meta-description').value = String(aiPatch.description || '');
+    }
+    return true;
+  }
+
+  if (step.id === 'tags') {
+    const aiPatch = await requestCoachPatchForStep(step, 'Propose des tags utiles pour cet upload.');
+    if (Array.isArray(aiPatch.tags)) {
+      document.getElementById('meta-tags').value = aiPatch.tags.join(', ');
+    }
+    return true;
+  }
+
+  if (step.id === 'family') {
+    const current = String(document.getElementById('meta-family').value || '').trim();
+    const title = String(document.getElementById('meta-title').value || '').trim();
+    document.getElementById('meta-family').value = current || title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    return true;
+  }
+
+  if (step.id === 'diffusion') {
+    setRouteTags('meta', ['route:super-videotheque']);
+    return true;
+  }
+
+  if (step.id === 'date') {
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    document.getElementById('meta-date-filmed').value = `${yyyy}-${mm}-${dd}`;
+    return true;
+  }
+
+  if (step.id === 'advanced') {
+    const aiPatch = await requestCoachPatchForStep(step, 'Propose des champs avances utiles pour cet upload.');
+    if (Object.keys(aiPatch).length > 0) {
+      applyMetadataPresetValues(aiPatch);
+    }
+    return true;
+  }
+
+  return true;
+}
+
+function advanceCoachStep() {
+  if (coachUploadStepIndex < COACH_UPLOAD_STEPS.length - 1) {
+    coachUploadStepIndex += 1;
+  } else {
+    coachUploadStepIndex = COACH_UPLOAD_STEPS.length;
+  }
+}
+
+async function submitCoachChatAnswer() {
+  const step = getCoachStep();
+  if (!step) return;
+
+  const input = document.getElementById('meta-assistant-input');
+  const answer = String(input?.value || '').trim();
+  if (!answer) return;
+
+  if (/^nothing$/i.test(answer)) {
+    await skipCoachQuestion();
+    return;
+  }
+  if (/^do\s*it$/i.test(answer)) {
+    await doItCoachQuestion();
+    return;
+  }
+
+  const ok = await applyCoachTextAnswer(step, answer);
+  if (!ok) return;
+  if (input) input.value = '';
+  advanceCoachStep();
+  saveCoachDraft();
+  renderCoachChatQuestion();
+}
+
+async function skipCoachQuestion() {
+  const step = getCoachStep();
+  if (!step) return;
+  if (step.id === 'visibility' && !coachVisibilityChosen) {
+    showToast('Visibilite obligatoire avant la suite.', true);
+    return;
+  }
+  advanceCoachStep();
+  saveCoachDraft();
+  renderCoachChatQuestion();
+}
+
+async function doItCoachQuestion() {
+  const step = getCoachStep();
+  if (!step) return;
+  const ok = await applyCoachDoIt(step);
+  if (!ok) return;
+  const input = document.getElementById('meta-assistant-input');
+  if (input) input.value = '';
+  advanceCoachStep();
+  saveCoachDraft();
+  renderCoachChatQuestion();
+}
+
 // ─── Auth ───
 function api(url, options = {}) {
   return fetch(url, {
@@ -1074,6 +1376,7 @@ function showDashboard() {
   document.getElementById('dashboard').style.display = 'block';
   renderAssistantControls();
   setupAssistantInput();
+  restoreCoachDraft();
   loadTagBoxes();
   // Show the library immediately. Sync is now explicit via buttons only.
   refreshLibrary();
@@ -1158,6 +1461,8 @@ function handleFileSelect(files) {
 
   // Show form
   document.getElementById('meta-form').classList.add('visible');
+  if (!coachVisibilityChosen) coachUploadStepIndex = 0;
+  renderCoachChatQuestion();
 
   if (isVideo) {
     detectVideoFormat(selectedFile).then((detectedFormat) => {
@@ -1167,6 +1472,12 @@ function handleFileSelect(files) {
     }).catch(() => {});
   }
 }
+
+document.getElementById('meta-private').addEventListener('change', () => {
+  coachVisibilityChosen = true;
+  saveCoachDraft();
+  renderCoachChatQuestion();
+});
 
 function clearFileSelection() {
   selectedFile = null;
@@ -1178,6 +1489,9 @@ function clearFileSelection() {
 
 function clearForm() {
   clearFileSelection();
+  coachUploadStepIndex = 0;
+  coachVisibilityChosen = false;
+  localStorage.removeItem(COACH_UPLOAD_DRAFT_KEY);
   document.getElementById('meta-form').classList.remove('visible');
   document.getElementById('meta-title').value = '';
   document.getElementById('meta-family').value = '';
@@ -1196,6 +1510,7 @@ function clearForm() {
   document.getElementById('meta-promo').checked = false;
   document.getElementById('meta-featured').checked = false;
   hideProgress();
+  renderCoachChatQuestion();
 }
 
 function getMetadataPresetFields() {
@@ -1239,7 +1554,10 @@ function applyMetadataPresetValues(data = {}) {
   if (data.cta_label !== undefined) document.getElementById('meta-cta-label').value = String(data.cta_label || '');
   if (data.quality_level !== undefined) document.getElementById('meta-quality-level').value = String(data.quality_level || 'draft');
   if (data.sort_order !== undefined) document.getElementById('meta-sort-order').value = String(data.sort_order || 0);
-  if (data.is_private !== undefined) document.getElementById('meta-private').checked = Boolean(data.is_private);
+  if (data.is_private !== undefined) {
+    document.getElementById('meta-private').checked = Boolean(data.is_private);
+    coachVisibilityChosen = true;
+  }
   if (data.is_promo !== undefined) document.getElementById('meta-promo').checked = Boolean(data.is_promo);
   if (data.is_featured !== undefined) document.getElementById('meta-featured').checked = Boolean(data.is_featured);
   if (data.route_tags !== undefined) setRouteTags('meta', data.route_tags);
