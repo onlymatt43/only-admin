@@ -393,6 +393,7 @@
       </div>
       <div class="assistant-quick-grid" id="assistant-quick-grid" style="display:none"></div>
       <div id="coach-chat-question" class="assistant-status local" style="margin-bottom:10px;display:flex">Question 1/9 - Visibilite: prive ou public ?</div>
+      <div id="coach-chat-choices" class="quick-pills" style="margin-bottom:10px"></div>
       <textarea id="meta-assistant-input" placeholder="Reponse COACH... (Entrée = envoyer, Shift+Entrée = nouvelle ligne)"></textarea>
       <div class="quick-hint">Le texte libre peut etre analyse par l'AI si `OPENAI_API_KEY` est configure. Sinon, le parser local reste actif.</div>
       <div id="assistant-status" class="assistant-status local">Coach local actif</div>
@@ -855,6 +856,7 @@ const COACH_UPLOAD_STEPS = [
 ];
 let coachUploadStepIndex = 0;
 let coachVisibilityChosen = false;
+let coachFileHints = { title: '', tags: [] };
 const ASSISTANT_STRUCTURED_FIELDS = [
   {
     key: 'visibility',
@@ -922,6 +924,7 @@ function resetAssistantControls() {
   }
   coachUploadStepIndex = 0;
   coachVisibilityChosen = false;
+  coachFileHints = { title: '', tags: [] };
   localStorage.removeItem(COACH_UPLOAD_DRAFT_KEY);
   setAssistantStatus({ mode: 'local', message: 'Coach local actif' });
   renderCoachChatQuestion();
@@ -1044,9 +1047,118 @@ function renderCoachChatQuestion() {
   const step = getCoachStep();
   if (!step) {
     el.textContent = 'Coach termine. Tu peux uploader ou continuer a ajuster.';
+    renderCoachChoices();
     return;
   }
   el.textContent = `Question ${coachUploadStepIndex + 1}/${COACH_UPLOAD_STEPS.length} - ${step.label}: ${step.question}`;
+  renderCoachChoices();
+}
+
+function formatTitleCandidate(raw) {
+  const cleaned = String(raw || '')
+    .replace(/\.[^/.]+$/, '')
+    .replace(/[\-_]+/g, ' ')
+    .replace(/\s*\(\d+x\d+\)\s*/ig, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return '';
+  return cleaned
+    .split(' ')
+    .map(word => word ? `${word.charAt(0).toUpperCase()}${word.slice(1).toLowerCase()}` : '')
+    .join(' ')
+    .trim();
+}
+
+function extractFilenameTags(name) {
+  const stop = new Set(['the', 'and', 'avec', 'pour', 'video', 'final', 'edit', 'clip', 'v1', 'v2']);
+  const tokens = String(name || '')
+    .replace(/\.[^/.]+$/, '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .map(t => t.trim())
+    .filter(Boolean)
+    .filter(t => t.length >= 3)
+    .filter(t => !stop.has(t));
+
+  const out = [];
+  const seen = new Set();
+  for (const t of tokens) {
+    if (seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+    if (out.length >= 6) break;
+  }
+  return out;
+}
+
+function getTopUsedTags(limit = 8) {
+  const counts = new Map();
+  for (const item of (Array.isArray(allMediaItems) ? allMediaItems : [])) {
+    const tags = Array.isArray(item?.tags) ? item.tags : [];
+    for (const tag of tags) {
+      const clean = String(tag || '').trim().toLowerCase();
+      if (!clean || clean.startsWith('route:') || clean.startsWith('source:')) continue;
+      counts.set(clean, (counts.get(clean) || 0) + 1);
+    }
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([tag]) => tag);
+}
+
+function getCoachChoices(step) {
+  if (!step) return [];
+  if (step.id === 'visibility') return ['private', 'public'];
+  if (step.id === 'title') {
+    const out = [];
+    if (coachFileHints.title) out.push(coachFileHints.title);
+    out.push('do it');
+    return out;
+  }
+  if (step.id === 'category') return ['preview', 'short-video', 'clip', 'feature', 'archive', 'full-movie'];
+  if (step.id === 'description') return ['do it', 'nothing'];
+  if (step.id === 'tags') {
+    const top = getTopUsedTags(8);
+    const merged = [...new Set([...(coachFileHints.tags || []), ...top])];
+    return merged.length ? merged : ['do it', 'nothing'];
+  }
+  if (step.id === 'family') return ['do it', 'nothing'];
+  if (step.id === 'diffusion') return ['route:super-videotheque', 'route:catalog', 'route:main-site', 'nothing'];
+  if (step.id === 'date') return ['today', 'nothing'];
+  if (step.id === 'advanced') return ['do it', 'nothing'];
+  return [];
+}
+
+function renderCoachChoices() {
+  const wrap = document.getElementById('coach-chat-choices');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+
+  const step = getCoachStep();
+  if (!step) return;
+  const choices = getCoachChoices(step);
+
+  for (const choice of choices) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'pill-btn';
+    btn.textContent = choice;
+    btn.onclick = () => {
+      if (/^nothing$/i.test(choice)) {
+        skipCoachQuestion();
+        return;
+      }
+      if (/^do\s*it$/i.test(choice)) {
+        doItCoachQuestion();
+        return;
+      }
+      const input = document.getElementById('meta-assistant-input');
+      if (input) input.value = choice;
+      submitCoachChatAnswer();
+    };
+    wrap.appendChild(btn);
+  }
 }
 
 function getFileStemForCoach() {
@@ -1068,6 +1180,7 @@ function saveCoachDraft() {
     localStorage.setItem(COACH_UPLOAD_DRAFT_KEY, JSON.stringify({
       stepIndex: coachUploadStepIndex,
       visibilityChosen: coachVisibilityChosen,
+      fileHints: coachFileHints,
       metadata: getMetadataPresetFields(),
     }));
   } catch (_err) {}
@@ -1084,6 +1197,12 @@ function restoreCoachDraft() {
     if (draft && typeof draft === 'object') {
       if (draft.metadata && typeof draft.metadata === 'object') {
         applyMetadataPresetValues(draft.metadata);
+      }
+      if (draft.fileHints && typeof draft.fileHints === 'object') {
+        coachFileHints = {
+          title: String(draft.fileHints.title || ''),
+          tags: Array.isArray(draft.fileHints.tags) ? draft.fileHints.tags : [],
+        };
       }
       coachUploadStepIndex = Math.max(0, Math.min(COACH_UPLOAD_STEPS.length - 1, Number(draft.stepIndex) || 0));
       coachVisibilityChosen = !!draft.visibilityChosen;
@@ -1199,7 +1318,7 @@ async function applyCoachDoIt(step) {
 
   if (step.id === 'title') {
     const current = String(document.getElementById('meta-title').value || '').trim();
-    document.getElementById('meta-title').value = current || getFileStemForCoach() || 'Sans titre';
+    document.getElementById('meta-title').value = current || coachFileHints.title || getFileStemForCoach() || 'Sans titre';
     return true;
   }
 
@@ -1218,6 +1337,10 @@ async function applyCoachDoIt(step) {
   }
 
   if (step.id === 'tags') {
+    if (Array.isArray(coachFileHints.tags) && coachFileHints.tags.length > 0) {
+      document.getElementById('meta-tags').value = [...new Set(coachFileHints.tags)].join(', ');
+      return true;
+    }
     const aiPatch = await requestCoachPatchForStep(step, 'Propose des tags utiles pour cet upload.');
     if (Array.isArray(aiPatch.tags)) {
       document.getElementById('meta-tags').value = aiPatch.tags.join(', ');
@@ -1438,10 +1561,20 @@ function handleFileSelect(files) {
   }
 
   // Auto-fill title from filename
-  let autoTitle = selectedFile.name.replace(/\.[^/.]+$/, '').replace(/\s*\(\d+x\d+\)\s*/, '').trim();
+  let autoTitle = formatTitleCandidate(selectedFile.name)
+    || selectedFile.name.replace(/\.[^/.]+$/, '').replace(/\s*\(\d+x\d+\)\s*/, '').trim();
   if (!titleInput.value.trim() || titleWasAutoFilled) {
     titleInput.value = autoTitle;
     titleWasAutoFilled = true;
+  }
+
+  const inferredTags = extractFilenameTags(selectedFile.name);
+  coachFileHints = {
+    title: autoTitle,
+    tags: inferredTags,
+  };
+  if (!document.getElementById('meta-tags').value.trim() && inferredTags.length > 0) {
+    document.getElementById('meta-tags').value = inferredTags.join(', ');
   }
 
   // Show file info
@@ -1462,6 +1595,7 @@ function handleFileSelect(files) {
   // Show form
   document.getElementById('meta-form').classList.add('visible');
   if (!coachVisibilityChosen) coachUploadStepIndex = 0;
+  saveCoachDraft();
   renderCoachChatQuestion();
 
   if (isVideo) {
@@ -1491,6 +1625,7 @@ function clearForm() {
   clearFileSelection();
   coachUploadStepIndex = 0;
   coachVisibilityChosen = false;
+  coachFileHints = { title: '', tags: [] };
   localStorage.removeItem(COACH_UPLOAD_DRAFT_KEY);
   document.getElementById('meta-form').classList.remove('visible');
   document.getElementById('meta-title').value = '';
@@ -2370,6 +2505,7 @@ async function refreshLibrary() {
     renderMediaGrid();
     renderTrackingTable();
     renderLibraryQualitySummary();
+    renderCoachChoices();
     document.getElementById('media-count').textContent = `${mediaItems.length}/${allMediaItems.length} éléments`;
   } catch (e) {
     console.error('Refresh error:', e);
