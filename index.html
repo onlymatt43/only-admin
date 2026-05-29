@@ -199,6 +199,12 @@
     .btn-secondary { padding: 10px 28px; background: var(--surface); color: var(--text-secondary); border: 1px solid var(--border); border-radius: 6px; font-size: 14px; transition: all 150ms ease-out; }
     .btn-secondary:hover { background: var(--surface-hover); color: var(--text-primary); }
 
+    /* Route chips — Diffusion */
+    .route-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .route-chip { padding: 5px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; color: var(--text-secondary); font-size: 12px; transition: all 150ms ease-out; cursor: pointer; }
+    .route-chip:hover { border-color: var(--primary); color: var(--text-primary); }
+    .route-chip.active { background: rgba(255,42,42,0.12); border-color: var(--primary); color: var(--primary); font-weight: 600; }
+
     /* Progress */
     .progress-bar { width: 100%; height: 6px; background: var(--background); border-radius: 3px; margin-top: 16px; display: none; overflow: hidden; }
     .progress-bar.visible { display: block; }
@@ -439,18 +445,16 @@
           </div>
         </div>
         <div class="form-group full">
-          <label>Visible sur</label>
-          <div class="destination-picker">
-            <label class="dest-check"><input type="checkbox" id="meta-dest-catalog"> Catalogue</label>
-            <label class="dest-check"><input type="checkbox" id="meta-dest-main-site"> Site principal</label>
-            <div class="dest-projects" style="margin-top:8px">
-              <span style="font-size:12px;color:#888">Projets :</span>
-              <div id="meta-dest-project-tags" class="dest-tags" style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0"></div>
-              <div style="display:flex;gap:6px;align-items:center">
-                <select id="meta-dest-project-input" style="flex:1;min-width:0;background:#1a1a1a;color:#fff;border:1px solid #333;padding:6px 8px;border-radius:4px"><option value="">— Choisir un projet —</option></select>
-                <button type="button" class="pill-btn" onclick="addProjectDestination('meta')">+ Ajouter</button>
-              </div>
-            </div>
+          <label>Diffusion</label>
+          <div class="route-chips" id="meta-route-chips">
+            <button type="button" class="route-chip" data-route="super-videotheque" onclick="toggleRouteChip(this)">🎬 Vidéothèque</button>
+            <button type="button" class="route-chip" data-route="catalog" onclick="toggleRouteChip(this)">📂 Catalogue</button>
+            <button type="button" class="route-chip" data-route="main-site" onclick="toggleRouteChip(this)">🌐 Site</button>
+            <div id="meta-dest-project-tags" class="dest-tags" style="display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center"></div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
+            <select id="meta-dest-project-input" style="background:#1a1a1a;color:#fff;border:1px solid #333;padding:5px 8px;border-radius:4px;font-size:12px"><option value="">— Ajouter un projet —</option></select>
+            <button type="button" class="pill-btn" onclick="addProjectDestination('meta')" style="font-size:12px">+ Projet</button>
           </div>
         </div>
         <div class="form-group full">
@@ -609,6 +613,17 @@
     <span>Modifier</span>
     <button class="close-btn" onclick="closeEditPanel()">&times;</button>
   </h3>
+  <div id="edit-ai-wrap" style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:16px">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+      <span style="font-size:14px">🤖</span>
+      <span style="font-size:13px;font-weight:600">Coach AI</span>
+      <span id="edit-ai-status" style="font-size:11px;color:var(--text-secondary);margin-left:auto"></span>
+    </div>
+    <div style="display:flex;gap:8px">
+      <input type="text" id="edit-ai-input" placeholder="Décrire, suggérer des tags, changer la diffusion..." style="flex:1;padding:8px 12px;background:var(--background);border:1px solid var(--border);border-radius:6px;color:#fff;font-size:13px" onkeydown="if(event.key==='Enter')applyEditPanelAI()">
+      <button type="button" class="btn-sm" id="edit-ai-btn" onclick="applyEditPanelAI()" style="white-space:nowrap">Appliquer</button>
+    </div>
+  </div>
   <div class="form-grid" style="gap:12px">
     <div class="form-group full">
       <label>Titre</label>
@@ -649,18 +664,16 @@
       </div>
     </div>
     <div class="form-group full">
-      <label>Visible sur</label>
-      <div class="destination-picker">
-        <label class="dest-check"><input type="checkbox" id="edit-dest-catalog"> Catalogue</label>
-        <label class="dest-check"><input type="checkbox" id="edit-dest-main-site"> Site principal</label>
-        <div class="dest-projects" style="margin-top:8px">
-          <span style="font-size:12px;color:#888">Projets :</span>
-          <div id="edit-dest-project-tags" class="dest-tags" style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0"></div>
-          <div style="display:flex;gap:6px;align-items:center">
-            <select id="edit-dest-project-input" style="flex:1;min-width:0;background:#1a1a1a;color:#fff;border:1px solid #333;padding:6px 8px;border-radius:4px"><option value="">— Choisir un projet —</option></select>
-            <button type="button" class="pill-btn" onclick="addProjectDestination('edit')">+ Ajouter</button>
-          </div>
-        </div>
+      <label>Diffusion</label>
+      <div class="route-chips" id="edit-route-chips">
+        <button type="button" class="route-chip" data-route="super-videotheque" onclick="toggleRouteChip(this)">🎬 Vidéothèque</button>
+        <button type="button" class="route-chip" data-route="catalog" onclick="toggleRouteChip(this)">📂 Catalogue</button>
+        <button type="button" class="route-chip" data-route="main-site" onclick="toggleRouteChip(this)">🌐 Site</button>
+        <div id="edit-dest-project-tags" class="dest-tags" style="display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center"></div>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
+        <select id="edit-dest-project-input" style="background:#1a1a1a;color:#fff;border:1px solid #333;padding:5px 8px;border-radius:4px;font-size:12px"><option value="">— Ajouter un projet —</option></select>
+        <button type="button" class="pill-btn" onclick="addProjectDestination('edit')" style="font-size:12px">+ Projet</button>
       </div>
     </div>
     <div class="form-group">
@@ -1218,6 +1231,7 @@ function parseAssistantPrompt(raw) {
   const routeTags = [];
   if (/\bcatalog\b|\bcatalogue\b/i.test(lower)) routeTags.push('route:catalog');
   if (/\bmain-site\b|\bsite principal\b/i.test(lower)) routeTags.push('route:main-site');
+  if (/\bvid[eé]oth[eè]que\b|\bsuper-videotheque\b/i.test(lower)) routeTags.push('route:super-videotheque');
   for (const m of text.matchAll(/project\s*:\s*([a-z0-9-]+)/gi)) {
     routeTags.push(`route:project:${m[1].toLowerCase()}`);
   }
@@ -1521,6 +1535,13 @@ async function doUpload() {
   const files = selectedFiles.length > 0 ? selectedFiles.slice() : (selectedFile ? [selectedFile] : []);
   if (!files.length) return showToast('Aucun fichier sélectionné', true);
 
+  function isVideoFile(file) {
+    const mime = String(file?.type || '').toLowerCase();
+    if (mime.startsWith('video/')) return true;
+    const name = String(file?.name || '').toLowerCase();
+    return /\.(mp4|mov|m4v|webm|mkv|avi|mpeg|mpg)$/i.test(name);
+  }
+
   const btn = document.getElementById('btn-upload');
   btn.disabled = true;
 
@@ -1544,7 +1565,7 @@ async function doUpload() {
     for (let index = 0; index < files.length; index += 1) {
       const file = files[index];
       selectedFile = file;
-      const isVideo = file.type.startsWith('video/');
+      const isVideo = isVideoFile(file);
       const title = buildUploadTitle(file);
 
       document.getElementById('meta-title').value = title;
@@ -1793,16 +1814,20 @@ function normalizeRouteTag(value) {
 function routeTagToLegacyDestination(routeTag) {
   const norm = normalizeRouteTag(routeTag);
   if (!norm) return '';
-  const value = norm.replace(/^route:/, '');
-  if (value === 'catalog' || value === 'main-site') return value;
-  if (value.startsWith('project:')) return value;
-  return '';
+  return norm.replace(/^route:/, '');
+}
+
+function toggleRouteChip(btn) {
+  btn.classList.toggle('active');
 }
 
 function getRouteTags(prefix) {
   const out = [];
-  if (document.getElementById(`${prefix}-dest-catalog`).checked) out.push('route:catalog');
-  if (document.getElementById(`${prefix}-dest-main-site`).checked) out.push('route:main-site');
+  const chips = document.querySelectorAll(`#${prefix}-route-chips .route-chip.active`);
+  chips.forEach(chip => {
+    const route = chip.dataset.route;
+    if (route) out.push(`route:${route}`);
+  });
   const tags = document.querySelectorAll(`#${prefix}-dest-project-tags .dest-tag`);
   tags.forEach(tag => {
     const routeTag = normalizeRouteTag(tag.dataset.route || tag.dataset.dest || '');
@@ -1821,15 +1846,19 @@ function setRouteTags(prefix, routeTags) {
   const arr = (Array.isArray(routeTags) ? routeTags : [])
     .map(normalizeRouteTag)
     .filter(Boolean);
-  document.getElementById(`${prefix}-dest-catalog`).checked = arr.includes('route:catalog');
-  document.getElementById(`${prefix}-dest-main-site`).checked = arr.includes('route:main-site');
-  const tagsEl = document.getElementById(`${prefix}-dest-project-tags`);
-  tagsEl.innerHTML = '';
-  arr.filter(d => d.startsWith('route:project:')).forEach(d => {
-    const routeValue = d.replace(/^route:/, '');
-    const slug = routeValue.replace('project:', '');
-    _addDestTagEl(prefix, routeValue, slug, tagsEl);
+  const chips = document.querySelectorAll(`#${prefix}-route-chips .route-chip`);
+  chips.forEach(chip => {
+    chip.classList.toggle('active', arr.includes(`route:${chip.dataset.route}`));
   });
+  const tagsEl = document.getElementById(`${prefix}-dest-project-tags`);
+  if (tagsEl) {
+    tagsEl.innerHTML = '';
+    arr.filter(d => d.startsWith('route:project:')).forEach(d => {
+      const routeValue = d.replace(/^route:/, '');
+      const slug = routeValue.replace('project:', '');
+      _addDestTagEl(prefix, routeValue, slug, tagsEl);
+    });
+  }
 }
 
 function setDestinations(prefix, destinations) {
@@ -2246,6 +2275,58 @@ async function doSaveEdit() {
     refreshLibrary();
   } catch (e) {
     showToast('Erreur: ' + e.message, true);
+  }
+}
+
+async function applyEditPanelAI() {
+  const input = document.getElementById('edit-ai-input');
+  const msg = String(input?.value || '').trim();
+  if (!msg) return showToast('Décris ce que tu veux faire', true);
+  const btn = document.getElementById('edit-ai-btn');
+  const status = document.getElementById('edit-ai-status');
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = '...';
+  try {
+    const result = await requestAssistantPatch(msg, {
+      current: {
+        title: document.getElementById('edit-title').value,
+        category: document.getElementById('edit-category').value,
+        tags: document.getElementById('edit-tags').value.split(',').map(t => t.trim()).filter(Boolean),
+        route_tags: getRouteTags('edit')
+      }
+    });
+    const patch = result.patch || {};
+    if (Object.keys(patch).length === 0) {
+      if (status) status.textContent = 'Aucune suggestion';
+      return;
+    }
+    if (patch.title) document.getElementById('edit-title').value = patch.title;
+    if (patch.family_slug || patch.family) document.getElementById('edit-family').value = patch.family_slug || patch.family;
+    if (patch.category) document.getElementById('edit-category').value = patch.category;
+    if (patch.description) document.getElementById('edit-description').value = patch.description;
+    if (patch.tags) {
+      const existing = document.getElementById('edit-tags').value.split(',').map(t => t.trim()).filter(Boolean);
+      document.getElementById('edit-tags').value = [...new Set([...existing, ...patch.tags])].join(', ');
+    }
+    if (patch.date_filmed) document.getElementById('edit-date-filmed').value = patch.date_filmed;
+    if (patch.notes) document.getElementById('edit-notes').value = patch.notes;
+    if (patch.pricing_mode) document.getElementById('edit-pricing-mode').value = patch.pricing_mode;
+    if (patch.lifecycle_stage) document.getElementById('edit-lifecycle-stage').value = patch.lifecycle_stage;
+    if (patch.cta_label) document.getElementById('edit-cta-label').value = patch.cta_label;
+    if (patch.quality_level) document.getElementById('edit-quality-level').value = patch.quality_level;
+    if (patch.is_private !== undefined) document.getElementById('edit-private').checked = patch.is_private;
+    if (patch.is_featured !== undefined) document.getElementById('edit-featured').checked = patch.is_featured;
+    if (patch.route_tags && patch.route_tags.length > 0) {
+      setRouteTags('edit', [...new Set([...getRouteTags('edit'), ...patch.route_tags])]);
+    }
+    input.value = '';
+    if (status) status.textContent = result.message || '✓';
+    showToast('Coach AI appliqué');
+  } catch (e) {
+    showToast('AI indisponible', true);
+    if (status) status.textContent = 'Erreur';
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 

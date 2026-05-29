@@ -11,21 +11,51 @@ function normalizePullZone(value, fallback) {
   return `https://${raw.replace(/^\/+/, '').replace(/\/$/, '')}`;
 }
 
+function readEnv(canonicalName, legacyNames = []) {
+  const canonicalValue = String(process.env[canonicalName] || '').trim();
+  if (canonicalValue) return canonicalValue;
+
+  for (const legacyName of legacyNames) {
+    const legacyValue = String(process.env[legacyName] || '').trim();
+    if (legacyValue) return legacyValue;
+  }
+
+  return '';
+}
+
+function resolveEnv(canonicalName, legacyNames = []) {
+  const canonicalValue = String(process.env[canonicalName] || '').trim();
+  if (canonicalValue) {
+    return { value: canonicalValue, source: canonicalName, used_legacy_alias: false };
+  }
+
+  for (const legacyName of legacyNames) {
+    const legacyValue = String(process.env[legacyName] || '').trim();
+    if (legacyValue) {
+      return { value: legacyValue, source: legacyName, used_legacy_alias: true };
+    }
+  }
+
+  return { value: '', source: null, used_legacy_alias: false };
+}
+
+const ENV_STRICT_MODE = String(process.env.ENV_STRICT_MODE || '').trim().toLowerCase() === 'true';
+
 // ─── Bunny Config ───
 const PUBLIC = {
-  id: String(process.env.BUNNY_LIBRARY_ID || '').trim(),
-  key: process.env.BUNNY_ACCESS_KEY || '',
-  pull: normalizePullZone(process.env.BUNNY_PULL_ZONE, '')
+  id: readEnv('BUNNY_PUBLIC_LIBRARY_ID', ['BUNNY_LIBRARY_ID']),
+  key: readEnv('BUNNY_PUBLIC_LIBRARY_API_KEY', ['BUNNY_ACCESS_KEY']),
+  pull: normalizePullZone(readEnv('BUNNY_PUBLIC_PULL_ZONE_URL', ['BUNNY_PULL_ZONE']), '')
 };
 const PRIVATE = {
-  id: String(process.env.BUNNY_PRIVATE_LIBRARY_ID || '').trim(),
-  key: process.env.BUNNY_PRIVATE_ACCESS_KEY || '',
-  pull: normalizePullZone(process.env.BUNNY_PRIVATE_PULL_ZONE, '')
+  id: readEnv('BUNNY_PRIVATE_LIBRARY_ID', ['BUNNY_PRIVATE_LIBRARY_ID']),
+  key: readEnv('BUNNY_PRIVATE_LIBRARY_API_KEY', ['BUNNY_PRIVATE_ACCESS_KEY', 'BUNNY_API_KEY']),
+  pull: normalizePullZone(readEnv('BUNNY_PRIVATE_PULL_ZONE_URL', ['BUNNY_PRIVATE_PULL_ZONE', 'BUNNY_PULL_ZONE_HOST']), '')
 };
 const STORAGE = {
   name: process.env.BUNNY_STORAGE_NAME || '',
-  password: process.env.BUNNY_STORAGE_PASSWORD || '',
-  pullZone: normalizePullZone(process.env.BUNNY_STORAGE_PULL_ZONE, '')
+  password: readEnv('BUNNY_STORAGE_API_KEY', ['BUNNY_STORAGE_PASSWORD']),
+  pullZone: normalizePullZone(readEnv('BUNNY_STORAGE_PULL_ZONE_URL', ['BUNNY_STORAGE_PULL_ZONE']), '')
 };
 
 // ─── Helpers ───
@@ -73,8 +103,14 @@ function normalizeQualityLevel(value) {
   return 'draft';
 }
 
-function assertConfig(requiredKeys) {
-  const missing = requiredKeys.filter(k => !String(process.env[k] || '').trim());
+function assertResolvedConfig(requiredRows) {
+  const missing = [];
+  for (const row of requiredRows) {
+    const aliases = Array.isArray(row.aliases) ? row.aliases : [];
+    if (!readEnv(row.key, aliases)) {
+      missing.push(row.key);
+    }
+  }
   if (missing.length > 0) {
     throw new Error(`Missing required env vars: ${missing.join(', ')}`);
   }
@@ -82,14 +118,26 @@ function assertConfig(requiredKeys) {
 
 function ensureBunnyVideoConfig(library) {
   if (library === 'private') {
-    assertConfig(['BUNNY_PRIVATE_LIBRARY_ID', 'BUNNY_PRIVATE_ACCESS_KEY', 'BUNNY_PRIVATE_PULL_ZONE']);
+    assertResolvedConfig([
+      { key: 'BUNNY_PRIVATE_LIBRARY_ID' },
+      { key: 'BUNNY_PRIVATE_LIBRARY_API_KEY', aliases: ['BUNNY_PRIVATE_ACCESS_KEY', 'BUNNY_API_KEY'] },
+      { key: 'BUNNY_PRIVATE_PULL_ZONE_URL', aliases: ['BUNNY_PRIVATE_PULL_ZONE', 'BUNNY_PULL_ZONE_HOST'] },
+    ]);
     return;
   }
-  assertConfig(['BUNNY_LIBRARY_ID', 'BUNNY_ACCESS_KEY', 'BUNNY_PULL_ZONE']);
+  assertResolvedConfig([
+    { key: 'BUNNY_PUBLIC_LIBRARY_ID', aliases: ['BUNNY_LIBRARY_ID'] },
+    { key: 'BUNNY_PUBLIC_LIBRARY_API_KEY', aliases: ['BUNNY_ACCESS_KEY'] },
+    { key: 'BUNNY_PUBLIC_PULL_ZONE_URL', aliases: ['BUNNY_PULL_ZONE'] },
+  ]);
 }
 
 function ensureBunnyStorageConfig() {
-  assertConfig(['BUNNY_STORAGE_NAME', 'BUNNY_STORAGE_PASSWORD', 'BUNNY_STORAGE_PULL_ZONE']);
+  assertResolvedConfig([
+    { key: 'BUNNY_STORAGE_NAME' },
+    { key: 'BUNNY_STORAGE_API_KEY', aliases: ['BUNNY_STORAGE_PASSWORD'] },
+    { key: 'BUNNY_STORAGE_PULL_ZONE_URL', aliases: ['BUNNY_STORAGE_PULL_ZONE'] },
+  ]);
 }
 
 const PREVIEW_CATEGORIES = new Set(['preview', 'preview-ever', 'short-video']);
@@ -123,9 +171,7 @@ function normalizeRouteTag(tag) {
 function routeTagFromDestination(dest) {
   const raw = String(dest || '').trim().toLowerCase();
   if (!raw) return '';
-  if (raw.startsWith('project:')) return normalizeRouteTag(`${ROUTE_TAG_PREFIX}${raw}`);
-  if (raw === 'catalog' || raw === 'main-site') return normalizeRouteTag(`${ROUTE_TAG_PREFIX}${raw}`);
-  return '';
+  return normalizeRouteTag(`${ROUTE_TAG_PREFIX}${raw}`);
 }
 
 function destinationFromRouteTag(tag) {
@@ -400,7 +446,7 @@ function normalizeBunnyAssetUrl(url, pull, guid, fallbackFilename) {
 function signPrivateMediaItem(item) {
   if (!item || !item.is_private || item.type !== 'video') return item;
 
-  const signingKey = (process.env.BUNNY_TOKEN_KEY || process.env.BUNNY_PRIVATE_ACCESS_KEY || '').trim();
+  const signingKey = readEnv('BUNNY_CDN_SIGNING_KEY', ['BUNNY_TOKEN_KEY', 'BUNNY_SIGNING_KEY', 'BUNNY_PRIVATE_ACCESS_KEY']);
   if (!signingKey) return item;
 
   const formats = item.formats || {};
@@ -423,6 +469,79 @@ function signPrivateMediaItem(item) {
     ...item,
     formats: signedFormats
   };
+}
+
+function computeEnvHealth() {
+  const checks = [
+    { key: 'ADMIN_TOKEN', aliases: [], required: true },
+    { key: 'TURSO_DB_URL', aliases: ['TURSO_DATABASE_URL'], required: true },
+    { key: 'TURSO_DB_TOKEN', aliases: ['TURSO_AUTH_TOKEN'], required: true },
+    { key: 'BUNNY_PUBLIC_LIBRARY_ID', aliases: ['BUNNY_LIBRARY_ID'], required: false },
+    { key: 'BUNNY_PUBLIC_LIBRARY_API_KEY', aliases: ['BUNNY_ACCESS_KEY'], required: false },
+    { key: 'BUNNY_PUBLIC_PULL_ZONE_URL', aliases: ['BUNNY_PULL_ZONE'], required: false },
+    { key: 'BUNNY_PRIVATE_LIBRARY_ID', aliases: ['BUNNY_PRIVATE_LIBRARY_ID'], required: false },
+    { key: 'BUNNY_PRIVATE_LIBRARY_API_KEY', aliases: ['BUNNY_PRIVATE_ACCESS_KEY', 'BUNNY_API_KEY'], required: false },
+    { key: 'BUNNY_PRIVATE_PULL_ZONE_URL', aliases: ['BUNNY_PRIVATE_PULL_ZONE', 'BUNNY_PULL_ZONE_HOST'], required: false },
+    { key: 'BUNNY_CDN_SIGNING_KEY', aliases: ['BUNNY_TOKEN_KEY', 'BUNNY_SIGNING_KEY'], required: false },
+    { key: 'ADMIN_SERVICE_KEY', aliases: ['CHAUD_DEVANT_SERVICE_KEY'], required: false },
+    { key: 'WEBHOOK_SECRET_PROJECT_LINKS', aliases: ['PROJECT_LINKS_REVALIDATE_SECRET', 'PROJECT_ROUTES_REVALIDATE_SECRET'], required: false },
+    { key: 'WEBHOOK_SECRET_SUPER_VIDEOTHEQUE', aliases: ['SUPER_VIDEOTHEQUE_WEBHOOK_SECRET', 'CATALOG_SYNC_WEBHOOK_SECRET'], required: false },
+  ];
+
+  const details = checks.map((row) => {
+    const resolved = resolveEnv(row.key, row.aliases);
+    return {
+      key: row.key,
+      required: row.required,
+      present: !!resolved.value,
+      source: resolved.source,
+      used_legacy_alias: resolved.used_legacy_alias,
+      aliases: row.aliases,
+    };
+  });
+
+  const missing_required = details.filter(d => d.required && !d.present).map(d => d.key);
+  const using_legacy_aliases = details.filter(d => d.used_legacy_alias).map(d => ({ key: d.key, source: d.source }));
+
+  return {
+    ok: missing_required.length === 0,
+    strict_mode: ENV_STRICT_MODE,
+    missing_required,
+    using_legacy_aliases,
+    details,
+  };
+}
+
+function getStrictBlockingMissing(action) {
+  const health = computeEnvHealth();
+  const missing = new Set(health.missing_required);
+
+  if (['upload', 'sync-videos', 'delete', 'resolve-duplicate'].includes(action)) {
+    const forUpload = [
+      'BUNNY_PUBLIC_LIBRARY_API_KEY',
+      'BUNNY_PUBLIC_PULL_ZONE_URL',
+      'BUNNY_PRIVATE_LIBRARY_API_KEY',
+      'BUNNY_PRIVATE_PULL_ZONE_URL',
+      'BUNNY_CDN_SIGNING_KEY'
+    ];
+    for (const key of forUpload) {
+      const row = health.details.find(d => d.key === key);
+      if (!row || !row.present) missing.add(key);
+    }
+  }
+
+  return { health, missing: Array.from(missing) };
+}
+
+async function actionEnvHealth(req, res) {
+  if (req.method !== 'GET') return res.status(405).json({ error: 'GET only' });
+  const targetAction = String(getQuery(req).target_action || '').trim();
+  const strict = getStrictBlockingMissing(targetAction || 'list');
+  return res.status(200).json({
+    ...strict.health,
+    target_action: targetAction || null,
+    strict_blocking_missing: strict.missing,
+  });
 }
 
 // ─── Actions ───
@@ -466,9 +585,10 @@ function notifyDestinations(destinations) {
   if (dests.length === 0) return;
 
   const projectRoutesUrl = (process.env.PROJECT_ROUTES_URL || '').trim().replace(/\/$/, '');
-  const revalidateSecret = (process.env.PROJECT_ROUTES_REVALIDATE_SECRET || '').trim();
+  const revalidateSecret = readEnv('WEBHOOK_SECRET_PROJECT_LINKS', ['PROJECT_LINKS_REVALIDATE_SECRET', 'PROJECT_ROUTES_REVALIDATE_SECRET']);
   const catalogSyncUrl = (process.env.CATALOG_SYNC_URL || '').trim().replace(/\/$/, '');
-  const catalogWebhookSecret = (process.env.CATALOG_SYNC_WEBHOOK_SECRET || '').trim();
+  const viewerSyncUrl = (process.env.VIEWER_SYNC_URL || '').trim().replace(/\/$/, '');
+  const catalogWebhookSecret = readEnv('WEBHOOK_SECRET_SUPER_VIDEOTHEQUE', ['SUPER_VIDEOTHEQUE_WEBHOOK_SECRET', 'CATALOG_SYNC_WEBHOOK_SECRET']);
 
   const slugs = [...new Set(
     dests.filter(d => d.startsWith('project:')).map(d => d.slice('project:'.length))
@@ -483,11 +603,14 @@ function notifyDestinations(destinations) {
     }
   }
 
-  if (catalogSyncUrl && catalogWebhookSecret && dests.includes('catalog')) {
-    fetch(`${catalogSyncUrl}/api/webhook/sync`, {
-      method: 'POST',
-      headers: { 'x-webhook-secret': catalogWebhookSecret },
-    }).catch(e => console.error('[notify] catalog webhook failed:', e.message));
+  if (catalogWebhookSecret && dests.includes('catalog')) {
+    const targets = [catalogSyncUrl, viewerSyncUrl].filter(Boolean);
+    for (const target of targets) {
+      fetch(`${target}/api/webhook/sync`, {
+        method: 'POST',
+        headers: { 'x-webhook-secret': catalogWebhookSecret },
+      }).catch(e => console.error(`[notify] sync webhook failed (${target}):`, e.message));
+    }
   }
 }
 
@@ -1214,13 +1337,43 @@ async function actionSyncVideos(req, res, db) {
 
   // ─── Group individual video files into multi-format projects ───
   // Convention: Bunny title "my-video (16x9)" → project "my-video", format "16x9"
+  // Be tolerant to naming variants and avoid silent overwrites when format labels collide.
   function groupProjects(items, lib) {
+    function ratioFormat(width, height) {
+      const w = Number(width || 0);
+      const h = Number(height || 0);
+      if (!w || !h) return '';
+      const ratio = w / h;
+      if (Math.abs(ratio - (16 / 9)) < 0.08) return '16x9';
+      if (Math.abs(ratio - (9 / 16)) < 0.08) return '9x16';
+      if (Math.abs(ratio - 1) < 0.08) return '1x1';
+      return `${Math.round(w)}x${Math.round(h)}`;
+    }
+
+    function parseProjectAndFormat(title, width, height) {
+      const safeTitle = String(title || '').trim();
+      if (!safeTitle) return { pid: 'untitled', fmt: ratioFormat(width, height) || '16x9' };
+
+      const normalized = safeTitle.replace(/\s+/g, ' ').trim();
+      const parenMatch = normalized.match(/^(.*?)\s*\(([^)]+)\)\s*$/);
+      if (parenMatch) {
+        const pid = (parenMatch[1] || '').trim() || normalized;
+        const fmtRaw = (parenMatch[2] || '').trim().toLowerCase();
+        const fmt = fmtRaw
+          .replace(/\s+/g, '')
+          .replace(/^vertical$/, '9x16')
+          .replace(/^portrait$/, '9x16')
+          .replace(/^horizontal$/, '16x9')
+          .replace(/^square$/, '1x1');
+        return { pid, fmt: fmt || ratioFormat(width, height) || '16x9' };
+      }
+
+      return { pid: normalized, fmt: ratioFormat(width, height) || '16x9' };
+    }
+
     const projs = {};
     for (const v of items) {
-      const match = v.title.match(/^(.*) \((.*)\)$/);
-      const rawPid = match ? match[1] : v.title.replace(/\.[^/.]+$/, '');
-      const pid = rawPid || v.title;
-      const fmt = match ? match[2] : '16x9';
+      const { pid, fmt } = parseProjectAndFormat(v.title, v.width, v.height);
       if (!projs[pid]) {
         projs[pid] = {
           id: pid,
@@ -1229,7 +1382,15 @@ async function actionSyncVideos(req, res, db) {
           category: null,
         };
       }
-      projs[pid].formats[fmt] = {
+      const baseFmt = String(fmt || '16x9').trim() || '16x9';
+      let finalFmt = baseFmt;
+      let i = 2;
+      while (projs[pid].formats[finalFmt] && projs[pid].formats[finalFmt].guid !== v.guid) {
+        finalFmt = `${baseFmt}-${i}`;
+        i++;
+      }
+
+      projs[pid].formats[finalFmt] = {
         bunny_url: `${lib.pull}/${v.guid}/play_720p.mp4`,
         guid: v.guid,
         thumbnail_url: `${lib.pull}/${v.guid}/${v.thumbnailFileName || 'thumbnail.jpg'}`,
@@ -1242,6 +1403,25 @@ async function actionSyncVideos(req, res, db) {
 
   const projects = groupProjects(bunnyItems, PUBLIC);
   const privateProjects = groupProjects(bunnyPrivateItems, PRIVATE);
+
+  function buildDefaultRouting({ category, bunnyLibrary }) {
+    const cat = String(category || '').trim().toLowerCase();
+    const lib = String(bunnyLibrary || '').trim().toLowerCase();
+    const destinations = new Set();
+
+    if (lib === 'private' || cat === 'full-movie' || cat === 'short-video' || cat === 'preview') {
+      destinations.add('super-videotheque');
+      destinations.add('catalog');
+    } else {
+      destinations.add('catalog');
+      destinations.add('main-site');
+    }
+
+    return {
+      destinations: Array.from(destinations),
+      routeTags: Array.from(destinations).map(d => `route:${d}`),
+    };
+  }
 
   // ─── Detect meaningful source-field changes ───
   // Compares format keys, guids, and sizes — order-independent.
@@ -1273,6 +1453,7 @@ async function actionSyncVideos(req, res, db) {
 
       if (existing.rows.length > 0) {
         const row = existing.rows[0];
+        const routing = buildDefaultRouting({ category: proj.category, bunnyLibrary: 'public' });
         let existingFormats = {};
         try { existingFormats = JSON.parse(row.formats || '{}'); } catch (e) { /* keep {} */ }
 
@@ -1292,17 +1473,18 @@ async function actionSyncVideos(req, res, db) {
           await db.execute({
             sql: `UPDATE media_items
                   SET formats = ?, duration = ?, file_size = ?,
+                      tags = ?, destinations = ?,
                       last_synced_at = datetime('now'), external_updated_at = ?, updated_at = datetime('now')
                   WHERE id = ?`,
-            args: [JSON.stringify(proj.formats), newDuration, newFileSize, proj.dateCreated, pid]
+            args: [JSON.stringify(proj.formats), newDuration, newFileSize, JSON.stringify(routing.routeTags), JSON.stringify(routing.destinations), proj.dateCreated, pid]
           });
           updated_source++;
           details.push({ id: pid, action: 'updated_source' });
         } else {
           // No source change: only stamp the sync timestamp
           await db.execute({
-            sql: `UPDATE media_items SET last_synced_at = datetime('now') WHERE id = ?`,
-            args: [pid]
+            sql: `UPDATE media_items SET tags = ?, destinations = ?, last_synced_at = datetime('now') WHERE id = ?`,
+            args: [JSON.stringify(routing.routeTags), JSON.stringify(routing.destinations), pid]
           });
           unchanged++;
         }
@@ -1324,11 +1506,14 @@ async function actionSyncVideos(req, res, db) {
         sql: `INSERT INTO media_items
                 (id, type, title, status, category, primary_format, formats, bunny_library, source_type,
                  duration, file_size, dedup_key, duplicate_of, duplicate_status,
+                 tags, destinations,
                  last_synced_at, external_updated_at, updated_at)
-              VALUES (?, 'video', ?, 'published', ?, ?, ?, 'public', 'sync', ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
+              VALUES (?, 'video', ?, 'published', ?, ?, ?, 'public', 'sync', ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
         args: [
           pid, pid, (proj.category || ''), primaryFormat, JSON.stringify(proj.formats), duration, fileSize,
           syncDedupKey, syncDupMatch ? syncDupMatch.id : null, syncDupMatch ? 'duplicate' : null,
+          JSON.stringify(buildDefaultRouting({ category: proj.category, bunnyLibrary: 'public' }).routeTags),
+          JSON.stringify(buildDefaultRouting({ category: proj.category, bunnyLibrary: 'public' }).destinations),
           proj.dateCreated, proj.dateCreated
         ]
       });
@@ -1352,6 +1537,7 @@ async function actionSyncVideos(req, res, db) {
 
       if (existing.rows.length > 0) {
         const row = existing.rows[0];
+        const routing = buildDefaultRouting({ category: proj.category, bunnyLibrary: 'private' });
         let existingFormats = {};
         try { existingFormats = JSON.parse(row.formats || '{}'); } catch (e) { /* keep {} */ }
         const primaryFmtKey = Object.keys(proj.formats)[0] || '16x9';
@@ -1366,17 +1552,18 @@ async function actionSyncVideos(req, res, db) {
           await db.execute({
             sql: `UPDATE media_items
                   SET formats = ?, duration = ?, file_size = ?,
+                      tags = ?, destinations = ?,
                       is_private = 1, is_locked = 1, bunny_library = 'private',
                       last_synced_at = datetime('now'), external_updated_at = ?, updated_at = datetime('now')
                   WHERE id = ?`,
-            args: [JSON.stringify(proj.formats), newDuration, newFileSize, proj.dateCreated, pid]
+            args: [JSON.stringify(proj.formats), newDuration, newFileSize, JSON.stringify(routing.routeTags), JSON.stringify(routing.destinations), proj.dateCreated, pid]
           });
           updated_source++;
           details.push({ id: pid, action: 'updated_source', library: 'private' });
         } else {
           await db.execute({
-            sql: `UPDATE media_items SET is_private = 1, is_locked = 1, bunny_library = 'private', last_synced_at = datetime('now') WHERE id = ?`,
-            args: [pid]
+            sql: `UPDATE media_items SET tags = ?, destinations = ?, is_private = 1, is_locked = 1, bunny_library = 'private', last_synced_at = datetime('now') WHERE id = ?`,
+            args: [JSON.stringify(routing.routeTags), JSON.stringify(routing.destinations), pid]
           });
           unchanged++;
         }
@@ -1396,11 +1583,14 @@ async function actionSyncVideos(req, res, db) {
         sql: `INSERT INTO media_items
                 (id, type, title, status, category, primary_format, formats, bunny_library, is_private, is_locked, source_type,
                  duration, file_size, dedup_key, duplicate_of, duplicate_status,
+                 tags, destinations,
                  last_synced_at, external_updated_at, updated_at)
-              VALUES (?, 'video', ?, 'published', ?, ?, ?, 'private', 1, 1, 'sync', ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
+              VALUES (?, 'video', ?, 'published', ?, ?, ?, 'private', 1, 1, 'sync', ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
         args: [
           pid, pid, (proj.category || ''), primaryFormat, JSON.stringify(proj.formats), duration, fileSize,
           syncDedupKey, syncDupMatch ? syncDupMatch.id : null, syncDupMatch ? 'duplicate' : null,
+          JSON.stringify(buildDefaultRouting({ category: proj.category, bunnyLibrary: 'private' }).routeTags),
+          JSON.stringify(buildDefaultRouting({ category: proj.category, bunnyLibrary: 'private' }).destinations),
           proj.dateCreated, proj.dateCreated
         ]
       });
@@ -1978,45 +2168,10 @@ async function actionResolveDuplicate(req, res, db) {
   res.status(200).json({ resolved: true, id, action, cdn_results: cdnResults });
 }
 
-// ─── Service-to-service: by-destination ───
-// Callable by consumer services via Bearer ADMIN_SERVICE_KEY.
-// Does NOT require ADMIN_TOKEN so consumer services stay read-only.
-async function actionByDestination(req, res, db) {
-  if (req.method !== 'GET') return res.status(405).json({ error: 'GET only' });
-
-  const serviceKey = (process.env.ADMIN_SERVICE_KEY || '').trim();
-  if (!serviceKey) return res.status(503).json({ error: 'ADMIN_SERVICE_KEY not configured on server' });
-
-  const auth = (req.headers['authorization'] || '').trim();
-  const parts = auth.split(' ');
-  if (parts.length !== 2 || parts[0] !== 'Bearer' || parts[1].trim() !== serviceKey) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  const dest = getQuery(req).dest;
-  if (!dest) return res.status(400).json({ error: 'Missing ?dest= parameter' });
-
-  // Sanitize dest to prevent SQL injection via LIKE pattern
-  const safeDest = dest.replace(/[%_\\]/g, c => `\\${c}`);
-  const routeTag = normalizeRouteTag(`${ROUTE_TAG_PREFIX}${dest}`);
-  const safeRouteTag = routeTag.replace(/[%_\\]/g, c => `\\${c}`);
-
-  const result = await db.execute({
-    sql: `SELECT * FROM media_items
-          WHERE status = 'published'
-            AND ((tags LIKE ? ESCAPE '\\') OR (destinations LIKE ? ESCAPE '\\'))
-            AND (duplicate_status IS NULL OR duplicate_status != 'duplicate')
-          ORDER BY date_filmed DESC, date_uploaded DESC`,
-    args: [`%"${safeRouteTag}"%`, `%"${safeDest}"%`]
-  });
-
-  const items = result.rows.map(parseRow).map(withRouteFields).map(signPrivateMediaItem);
-  res.status(200).json({ dest, count: items.length, items });
-}
-
 // ─── Router ───
 const ACTIONS = {
   list: actionList,
+  'env-health': actionEnvHealth,
   update: actionUpdate,
   delete: actionDelete,
   'tag-boxes': actionTagBoxes,
@@ -2024,17 +2179,16 @@ const ACTIONS = {
   'delete-tag-box': actionDeleteTagBox,
   'import-link': actionImportLink,
   upload: actionUpload,
+  'sync-videos': actionSyncVideos,
   'quality-summary': actionQualitySummary,
   analytics: actionAnalytics,
   'resolve-duplicate': actionResolveDuplicate,
-  'by-destination': actionByDestination,
 };
 
 // Explicitly retained but disabled from routing.
 const DISABLED_ACTIONS = [
   actionMigrateShowcase,
   actionSyncPhotos,
-  actionSyncVideos,
   actionAutoMetadata,
   actionLifecycleBatch,
   actionFindDuplicates,
@@ -2046,14 +2200,30 @@ module.exports = async (req, res) => {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const action = getQuery(req).action;
+  if (action === 'by-destination') {
+    return res.status(410).json({
+      error: 'Action moved',
+      message: 'Use /api/consumer-read?dest=... with ADMIN_SERVICE_KEY',
+    });
+  }
   const handler = ACTIONS[action];
   if (!handler) {
     return res.status(400).json({ error: `Unknown action: ${action}`, available: Object.keys(ACTIONS) });
   }
 
-  // by-destination uses its own service-key auth; all other actions require ADMIN_TOKEN
-  if (action !== 'by-destination' && !checkAuth(req)) {
+  if (!checkAuth(req)) {
     return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  if (ENV_STRICT_MODE && action !== 'env-health') {
+    const strict = getStrictBlockingMissing(action);
+    if (strict.missing.length > 0) {
+      return res.status(503).json({
+        error: 'ENV_STRICT_MODE blocking request: missing environment variables',
+        action,
+        missing: strict.missing,
+      });
+    }
   }
 
   try {
