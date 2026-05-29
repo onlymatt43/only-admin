@@ -1,5 +1,6 @@
 // Shared helper for admin endpoints — NOT exposed as a Vercel API route (underscore prefix)
 // Uses Turso HTTP API directly (avoids @libsql/client migration bug)
+const nodeCrypto = require('crypto');
 
 let tableReady = false;
 
@@ -168,27 +169,30 @@ async function ensureTable() {
   tableReady = true;
 }
 
-function checkAuth(req) {
+function checkAuth(req, options = {}) {
+  const quiet = !!options.quiet;
   const token = process.env.ADMIN_TOKEN;
   if (!token) {
-    console.error('[AUTH] ADMIN_TOKEN env var is not set');
+    if (!quiet) console.error('[AUTH] ADMIN_TOKEN env var is not set');
     return false;
   }
   const auth = req.headers['authorization'];
   if (!auth) {
-    console.error('[AUTH] No Authorization header received');
+    if (!quiet) console.error('[AUTH] No Authorization header received');
     return false;
   }
   const parts = auth.split(' ');
   if (parts.length !== 2 || parts[0] !== 'Bearer') {
-    console.error('[AUTH] Malformed Authorization header:', auth.substring(0, 20));
+    if (!quiet) console.error('[AUTH] Malformed Authorization header:', auth.substring(0, 20));
     return false;
   }
   const submitted = parts[1].trim();
   const expected = token.trim();
-  console.log(`[AUTH] Token lengths: submitted=${submitted.length}, expected=${expected.length}`);
-  if (submitted === expected) return true;
-  console.error('[AUTH] Token mismatch');
+  const submittedBuf = Buffer.from(submitted, 'utf8');
+  const expectedBuf = Buffer.from(expected, 'utf8');
+  const ok = submittedBuf.length === expectedBuf.length && nodeCrypto.timingSafeEqual(submittedBuf, expectedBuf);
+  if (ok) return true;
+  if (!quiet) console.error('[AUTH] Token mismatch');
   return false;
 }
 

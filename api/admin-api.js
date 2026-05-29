@@ -41,6 +41,208 @@ function resolveEnv(canonicalName, legacyNames = []) {
 
 const ENV_STRICT_MODE = String(process.env.ENV_STRICT_MODE || '').trim().toLowerCase() === 'true';
 
+function parseJsonBody(req) {
+  if (req && req.body && typeof req.body === 'object') return req.body;
+  if (typeof req.body === 'string') {
+    try { return JSON.parse(req.body); } catch (_err) { return {}; }
+  }
+  return {};
+}
+
+function inferUploadType(body) {
+  const explicit = String(body?.type || '').trim().toLowerCase();
+  if (explicit === 'video' || explicit === 'photo') return explicit;
+
+  const fileName = String(body?.fileName || '').trim().toLowerCase();
+  const sourceUrl = String(body?.source_url || '').trim().toLowerCase();
+  const hasInlineFile = Boolean(body?.file);
+
+  const imageExt = /\.(png|jpe?g|webp|gif|bmp|heic|heif|avif)(\?.*)?$/i;
+  const videoExt = /\.(mp4|mov|m4v|webm|mkv|avi|mpeg|mpg)(\?.*)?$/i;
+
+  if (hasInlineFile && imageExt.test(fileName)) return 'photo';
+  if (hasInlineFile && videoExt.test(fileName)) return 'video';
+
+  if (sourceUrl) {
+    if (imageExt.test(sourceUrl)) return 'photo';
+    if (videoExt.test(sourceUrl)) return 'video';
+  }
+
+  // No clear signal: default to video (stream upload path).
+  return 'video';
+}
+
+function inferUploadStatus(body) {
+  const explicit = String(body?.status || '').trim().toLowerCase();
+  if (explicit === 'draft' || explicit === 'ready' || explicit === 'published') {
+    return explicit;
+  }
+
+  const hasEditorialInput = Boolean(
+    String(body?.category || '').trim()
+    || String(body?.description || '').trim()
+    || String(body?.family_slug || '').trim()
+    || String(body?.family || '').trim()
+    || String(body?.date_filmed || '').trim()
+    || String(body?.notes || '').trim()
+    || String(body?.source_url || '').trim()
+    || String(body?.pricing_mode || '').trim()
+    || String(body?.lifecycle_stage || '').trim()
+    || String(body?.cta_label || '').trim()
+    || (Number(body?.sort_order) || 0) !== 0
+    || Boolean(body?.is_featured)
+    || String(body?.quality_level || '').trim().toLowerCase() !== 'draft'
+    || parseArraySafe(body?.tags).length > 0
+    || parseArraySafe(body?.route_tags).length > 0
+    || parseArraySafe(body?.destinations).length > 0
+  );
+
+  return hasEditorialInput ? 'published' : 'draft';
+}
+
+function base64UrlEncode(value) {
+  return Buffer.from(value).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function base64UrlDecode(value) {
+  const input = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+  const padLen = (4 - (input.length % 4)) % 4;
+  const padded = input + '='.repeat(padLen);
+  return Buffer.from(padded, 'base64');
+}
+
+function getSessionSecret() {
+  return String(process.env.ADMIN_SESSION_SECRET || process.env.ADMIN_TOKEN || '').trim();
+}
+
+function createSessionToken() {
+  const secret = getSessionSecret();
+  if (!secret) throw new Error('ADMIN_SESSION_SECRET or ADMIN_TOKEN is required to mint sessions');
+
+  const now = Math.floor(Date.now() / 1000);
+  const ttl = Math.max(300, Number(process.env.ADMIN_SESSION_TTL_SECONDS || 43200));
+  const payload = {
+    typ: 'admin-session',
+    iat: now,
+    exp: now + ttl,
+    nonce: crypto.randomBytes(8).toString('hex')
+  };
+
+  const payloadRaw = JSON.stringify(payload);
+  const payloadEnc = base64UrlEncode(payloadRaw);
+  const sig = crypto.createHmac('sha256', secret).update(payloadEnc).digest('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  return {
+    token: `${payloadEnc}.${sig}`,
+    expires_in: ttl,
+    expires_at: payload.exp
+  };
+}
+
+function verifySessionToken(rawToken) {
+  const token = String(rawToken || '').trim();
+  if (!token || !token.includes('.')) return false;
+  const [payloadEnc, sig] = token.split('.');
+  if (!payloadEnc || !sig) return false;
+
+  const secret = getSessionSecret();
+  if (!secret) return false;
+
+  const expectedSig = crypto.createHmac('sha256', secret).update(payloadEnc).digest('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  const submittedBuf = Buffer.from(sig, 'utf8');
+  const expectedBuf = Buffer.from(expectedSig, 'utf8');
+  if (!(submittedBuf.length === expectedBuf.length && crypto.timingSafeEqual(submittedBuf, expectedBuf))) {
+    return false;
+  }
+
+  try {
+    const payload = JSON.parse(base64UrlDecode(payloadEnc).toString('utf8'));
+    if (!payload || payload.typ !== 'admin-session') return false;
+    const now = Math.floor(Date.now() / 1000);
+    return Number(payload.exp || 0) > now;
+  } catch (_err) {
+    return false;
+  }
+}
+
+function readBearerToken(req) {
+  const auth = String(req?.headers?.authorization || '').trim();
+  const parts = auth.split(' ');
+  if (parts.length !== 2 || parts[0] !== 'Bearer') return '';
+  return String(parts[1] || '').trim();
+}
+
+function decodeBase32(secret) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const cleaned = String(secret || '').toUpperCase().replace(/=+$/g, '').replace(/[^A-Z2-7]/g, '');
+  let bits = '';
+  for (const ch of cleaned) {
+    const idx = alphabet.indexOf(ch);
+    if (idx === -1) continue;
+    bits += idx.toString(2).padStart(5, '0');
+  }
+
+  const bytes = [];
+  for (let i = 0; i + 8 <= bits.length; i += 8) {
+    bytes.push(parseInt(bits.slice(i, i + 8), 2));
+  }
+  return Buffer.from(bytes);
+}
+
+function totpAt(secretBuffer, stepSeconds, timestampSeconds) {
+  const counter = Math.floor(timestampSeconds / stepSeconds);
+  const counterBuf = Buffer.alloc(8);
+  counterBuf.writeBigUInt64BE(BigInt(counter), 0);
+  const digest = crypto.createHmac('sha1', secretBuffer).update(counterBuf).digest();
+  const offset = digest[digest.length - 1] & 0xf;
+  const binary = ((digest[offset] & 0x7f) << 24)
+    | ((digest[offset + 1] & 0xff) << 16)
+    | ((digest[offset + 2] & 0xff) << 8)
+    | (digest[offset + 3] & 0xff);
+  return String(binary % 1000000).padStart(6, '0');
+}
+
+function verifyTotp(code) {
+  const secret = String(process.env.ADMIN_TOTP_SECRET || '').trim();
+  if (!secret) return { required: false, ok: true };
+
+  const normalizedCode = String(code || '').trim().replace(/\s+/g, '');
+  if (!/^\d{6}$/.test(normalizedCode)) {
+    return { required: true, ok: false };
+  }
+
+  const stepSeconds = Math.max(15, Number(process.env.ADMIN_TOTP_STEP_SECONDS || 30));
+  const windowSize = Math.max(0, Number(process.env.ADMIN_TOTP_WINDOW || 1));
+  const now = Math.floor(Date.now() / 1000);
+  const secretBuffer = decodeBase32(secret);
+  if (!secretBuffer.length) return { required: true, ok: false };
+
+  for (let drift = -windowSize; drift <= windowSize; drift += 1) {
+    const candidate = totpAt(secretBuffer, stepSeconds, now + (drift * stepSeconds));
+    const submittedBuf = Buffer.from(normalizedCode, 'utf8');
+    const expectedBuf = Buffer.from(candidate, 'utf8');
+    if (submittedBuf.length === expectedBuf.length && crypto.timingSafeEqual(submittedBuf, expectedBuf)) {
+      return { required: true, ok: true };
+    }
+  }
+
+  return { required: true, ok: false };
+}
+
+function isTotpEnabled() {
+  return String(process.env.ADMIN_TOTP_SECRET || '').trim().length > 0;
+}
+
+function isAuthorizedRequest(req) {
+  const bearer = readBearerToken(req);
+  if (bearer && verifySessionToken(bearer)) return true;
+
+  // In TOTP mode we only accept short-lived session tokens.
+  if (isTotpEnabled()) return false;
+
+  // Legacy mode fallback: direct ADMIN_TOKEN bearer auth.
+  return checkAuth(req, { quiet: true });
+}
+
 // ─── Bunny Config ───
 const PUBLIC = {
   id: readEnv('BUNNY_PUBLIC_LIBRARY_ID', ['BUNNY_LIBRARY_ID']),
@@ -512,21 +714,54 @@ function computeEnvHealth() {
   };
 }
 
-function getStrictBlockingMissing(action) {
+function hasEnv(health, key) {
+  const row = health.details.find((d) => d.key === key);
+  return !!(row && row.present);
+}
+
+function getStrictBlockingMissing(action, req) {
   const health = computeEnvHealth();
   const missing = new Set(health.missing_required);
 
-  if (['upload', 'sync-videos', 'delete', 'resolve-duplicate'].includes(action)) {
+  if (action === 'upload') {
+    const body = parseJsonBody(req);
+    const type = inferUploadType(body);
+    const isPrivate = Boolean(body?.is_private);
+    const hasInlinePhoto = Boolean(body?.file);
+
+    if (type === 'photo') {
+      // Photo link import does not need Bunny Storage credentials.
+      if (hasInlinePhoto) {
+        for (const key of ['BUNNY_STORAGE_NAME', 'BUNNY_STORAGE_API_KEY', 'BUNNY_STORAGE_PULL_ZONE_URL']) {
+          if (!hasEnv(health, key)) missing.add(key);
+        }
+      }
+    } else {
+      // Video upload requires only the selected visibility library.
+      if (isPrivate) {
+        for (const key of ['BUNNY_PRIVATE_LIBRARY_ID', 'BUNNY_PRIVATE_LIBRARY_API_KEY', 'BUNNY_PRIVATE_PULL_ZONE_URL']) {
+          if (!hasEnv(health, key)) missing.add(key);
+        }
+      } else {
+        for (const key of ['BUNNY_PUBLIC_LIBRARY_ID', 'BUNNY_PUBLIC_LIBRARY_API_KEY', 'BUNNY_PUBLIC_PULL_ZONE_URL']) {
+          if (!hasEnv(health, key)) missing.add(key);
+        }
+      }
+    }
+  }
+
+  if (['sync-videos', 'delete', 'resolve-duplicate'].includes(action)) {
     const forUpload = [
+      'BUNNY_PUBLIC_LIBRARY_ID',
       'BUNNY_PUBLIC_LIBRARY_API_KEY',
       'BUNNY_PUBLIC_PULL_ZONE_URL',
+      'BUNNY_PRIVATE_LIBRARY_ID',
       'BUNNY_PRIVATE_LIBRARY_API_KEY',
       'BUNNY_PRIVATE_PULL_ZONE_URL',
       'BUNNY_CDN_SIGNING_KEY'
     ];
     for (const key of forUpload) {
-      const row = health.details.find(d => d.key === key);
-      if (!row || !row.present) missing.add(key);
+      if (!hasEnv(health, key)) missing.add(key);
     }
   }
 
@@ -536,11 +771,55 @@ function getStrictBlockingMissing(action) {
 async function actionEnvHealth(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'GET only' });
   const targetAction = String(getQuery(req).target_action || '').trim();
-  const strict = getStrictBlockingMissing(targetAction || 'list');
+  const strict = getStrictBlockingMissing(targetAction || 'list', req);
   return res.status(200).json({
     ...strict.health,
     target_action: targetAction || null,
     strict_blocking_missing: strict.missing,
+  });
+}
+
+async function actionAuth(req, res) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
+
+  const body = parseJsonBody(req);
+  const token = String(body.token || '').trim();
+  const otp = String(body.otp || '').trim();
+  const expected = String(process.env.ADMIN_TOKEN || '').trim();
+  const otpCheck = verifyTotp(otp);
+  const totpEnabled = otpCheck.required;
+
+  if (totpEnabled) {
+    if (!otpCheck.ok) {
+      return res.status(401).json({
+        error: 'Invalid 2FA code',
+        otp_required: true
+      });
+    }
+  } else {
+    if (!token || !expected) {
+      return res.status(401).json({ error: 'Invalid credentials', otp_required: false });
+    }
+    const tokenBuf = Buffer.from(token, 'utf8');
+    const expectedBuf = Buffer.from(expected, 'utf8');
+    if (!(tokenBuf.length === expectedBuf.length && crypto.timingSafeEqual(tokenBuf, expectedBuf))) {
+      return res.status(401).json({ error: 'Invalid credentials', otp_required: false });
+    }
+  }
+
+  if (!otpCheck.ok) {
+    return res.status(401).json({
+      error: 'Invalid credentials',
+      otp_required: totpEnabled
+    });
+  }
+
+  const session = createSessionToken();
+  return res.status(200).json({
+    ok: true,
+    token: session.token,
+    expires_in: session.expires_in,
+    otp_required: totpEnabled
   });
 }
 
@@ -942,7 +1221,8 @@ async function actionUpload(req, res, db) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
 
   const body = req.body;
-  const type = body.type || 'video';
+  const type = inferUploadType(body);
+  const itemStatus = inferUploadStatus(body);
   const title = (body.title || 'Sans titre').trim();
   const format = body.format || '16x9';
   const isPrivate = !!body.is_private;
@@ -1007,12 +1287,13 @@ async function actionUpload(req, res, db) {
 
     await db.execute({
       sql: `INSERT INTO media_items (id, type, title, description, tags, category, date_filmed, is_private, is_locked, status, primary_format, formats, source_type, source_url, notes, family_slug, bunny_library, pricing_mode, lifecycle_stage, cta_label, quality_level, sort_order, is_featured, dedup_key, duplicate_of, duplicate_status, destinations, updated_at)
-            VALUES (?, 'video', ?, ?, ?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+        VALUES (?, 'video', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
       args: [
         id, title, body.description || '',
         JSON.stringify(persistedTags), body.category || '',
         body.date_filmed || null,
         isPrivate ? 1 : 0, isPrivate ? 1 : 0,
+        itemStatus,
         format, JSON.stringify(formats),
         body.source_type || 'upload', body.source_url || '', body.notes || '', familySlug,
         isPrivate ? 'private' : 'public',
@@ -1020,6 +1301,8 @@ async function actionUpload(req, res, db) {
         dedupKey, duplicateOf, duplicateStatus, JSON.stringify(destinations)
       ]
     });
+
+    result.status = itemStatus;
 
     result.guid = bunnyVideo.guid;
     result.upload = {
@@ -1058,11 +1341,12 @@ async function actionUpload(req, res, db) {
       const photoDupMatch = await checkDuplicate(db, photoDedupKey);
       await db.execute({
           sql: `INSERT INTO media_items (id, type, title, description, tags, category, date_filmed, is_private, is_locked, status, source_type, storage_path, file_size, notes, family_slug, pricing_mode, lifecycle_stage, cta_label, quality_level, sort_order, is_featured, dedup_key, duplicate_of, duplicate_status, destinations, updated_at)
-            VALUES (?, 'photo', ?, ?, ?, ?, ?, 0, 0, 'published', 'upload', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+            VALUES (?, 'photo', ?, ?, ?, ?, ?, 0, 0, ?, 'upload', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
         args: [
           id, title, body.description || '',
           JSON.stringify(persistedTags), body.category || '',
           body.date_filmed || null,
+          itemStatus,
           photoStoragePath, buffer.length, body.notes || '', familySlug,
             pricingMode, lifecycleStage, ctaLabel, qualityLevel, sortOrder, isFeatured ? 1 : 0,
           photoDedupKey,
@@ -1072,6 +1356,7 @@ async function actionUpload(req, res, db) {
         ]
       });
       result.url = url;
+      result.status = itemStatus;
       if (photoDupMatch) {
         result.is_duplicate = true;
         result.existing_id = photoDupMatch.id;
@@ -1082,11 +1367,12 @@ async function actionUpload(req, res, db) {
       const linkDupMatch = await checkDuplicate(db, linkDedupKey);
       await db.execute({
           sql: `INSERT INTO media_items (id, type, title, description, tags, category, date_filmed, status, source_type, source_url, notes, family_slug, pricing_mode, lifecycle_stage, cta_label, quality_level, sort_order, is_featured, dedup_key, duplicate_of, duplicate_status, destinations, updated_at)
-            VALUES (?, 'photo', ?, ?, ?, ?, ?, 'published', 'link', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+            VALUES (?, 'photo', ?, ?, ?, ?, ?, ?, 'link', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
         args: [
           id, title, body.description || '',
           JSON.stringify(persistedTags), body.category || '',
           body.date_filmed || null,
+          itemStatus,
           body.source_url || '', body.notes || '', familySlug,
             pricingMode, lifecycleStage, ctaLabel, qualityLevel, sortOrder, isFeatured ? 1 : 0,
           linkDedupKey,
@@ -1095,6 +1381,7 @@ async function actionUpload(req, res, db) {
           JSON.stringify(destinations)
         ]
       });
+      result.status = itemStatus;
       if (linkDupMatch) {
         result.is_duplicate = true;
         result.existing_id = linkDupMatch.id;
@@ -2170,6 +2457,7 @@ async function actionResolveDuplicate(req, res, db) {
 
 // ─── Router ───
 const ACTIONS = {
+  auth: actionAuth,
   list: actionList,
   'env-health': actionEnvHealth,
   update: actionUpdate,
@@ -2211,12 +2499,12 @@ module.exports = async (req, res) => {
     return res.status(400).json({ error: `Unknown action: ${action}`, available: Object.keys(ACTIONS) });
   }
 
-  if (!checkAuth(req)) {
+  if (action !== 'auth' && !isAuthorizedRequest(req)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  if (ENV_STRICT_MODE && action !== 'env-health') {
-    const strict = getStrictBlockingMissing(action);
+  if (ENV_STRICT_MODE && action !== 'env-health' && action !== 'auth') {
+    const strict = getStrictBlockingMissing(action, req);
     if (strict.missing.length > 0) {
       return res.status(503).json({
         error: 'ENV_STRICT_MODE blocking request: missing environment variables',
