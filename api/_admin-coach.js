@@ -136,6 +136,7 @@ function buildMetadataPrompt(context = {}) {
   return [
     'Tu es le coach AI d\'un admin de videotheque.',
     'Ta tache ici est uniquement metadata-suggest pour pre-remplir un upload.',
+    'Priorite absolue: commencer par is_private (private/public) avant les autres champs.',
     'Reponds avec du JSON strict uniquement, sans texte autour.',
     'Format attendu: {"patch": {...}, "message": "...", "confidence": 0.0}.',
     'Le champ patch peut contenir uniquement: title, family_slug, category, description, tags, date_filmed, format, notes, source_url, pricing_mode, lifecycle_stage, cta_label, quality_level, sort_order, is_private, is_promo, is_featured, route_tags.',

@@ -328,13 +328,15 @@
 <div id="login-screen">
   <div class="login-box">
     <h1>Admin Console</h1>
-    <p>Dashboard admin</p>
+    <p>Connexion securisee (Google Authenticator)</p>
     <div style="position:relative">
-      <input type="password" id="login-password" placeholder="Token admin" autocomplete="current-password">
+      <input type="password" id="login-password" placeholder="Token admin (fallback)" autocomplete="current-password">
       <button type="button" onclick="togglePasswordVisibility()" id="toggle-eye" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); background:none; border:none; color:#666; font-size:18px; padding:4px;">👁</button>
     </div>
+    <input type="text" id="login-otp" placeholder="Code Google Authenticator (6 chiffres)" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
+    <p style="color:#666; font-size:12px; margin-top:-8px; margin-bottom:14px; text-align:left;">Si la 2FA est active, seul ce code est requis.</p>
     <button onclick="doLogin()">Connexion</button>
-    <div class="login-error" id="login-error">Token invalide</div>
+    <div class="login-error" id="login-error">Identifiants invalides</div>
   </div>
 </div>
 
@@ -386,7 +388,7 @@
       <div class="meta-template-head">
         <div>
           <h3>Assistant upload</h3>
-          <p>Choisis des valeurs ciblées + ajoute ton texte libre. Le bot combine tout en un seul préremplissage.</p>
+          <p>Question 1 obligatoire: Prive/Public. Ensuite choisis des valeurs ciblees + ajoute ton texte libre.</p>
         </div>
       </div>
       <div class="assistant-quick-grid" id="assistant-quick-grid"></div>
@@ -955,6 +957,18 @@ function setAssistantStatus({ mode = 'local', message = 'Coach local actif' } = 
   status.textContent = message;
 }
 
+function hasVisibilitySelection(selections = {}, patches = []) {
+  if (selections.visibility === 'private' || selections.visibility === 'public') {
+    return true;
+  }
+  for (const patch of patches) {
+    if (patch && Object.prototype.hasOwnProperty.call(patch, 'is_private')) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // ─── Auth ───
 function api(url, options = {}) {
   return fetch(url, {
@@ -973,16 +987,30 @@ function api(url, options = {}) {
 }
 
 function doLogin() {
-  TOKEN = document.getElementById('login-password').value.trim();
-  if (!TOKEN) return;
-  localStorage.setItem('admin_token', TOKEN);
-  // Test the token
-  api('/api/admin-api?action=list').then(() => {
+  const rawToken = document.getElementById('login-password').value.trim();
+  const otp = String(document.getElementById('login-otp').value || '').trim();
+  if (!rawToken && !otp) return;
+
+  fetch('/api/admin-api?action=auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: rawToken, otp })
+  }).then(async (r) => {
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data.token) {
+      throw new Error(data.error || 'Unauthorized');
+    }
+    TOKEN = String(data.token || '').trim();
+    if (!TOKEN) throw new Error('Unauthorized');
+    localStorage.setItem('admin_token', TOKEN);
+    document.getElementById('login-error').style.display = 'none';
     showDashboard();
-  }).catch(() => {
+  }).catch((err) => {
     localStorage.removeItem('admin_token');
     TOKEN = '';
-    document.getElementById('login-error').style.display = 'block';
+    const el = document.getElementById('login-error');
+    el.textContent = err && err.message ? err.message : 'Token invalide';
+    el.style.display = 'block';
   });
 }
 
@@ -992,7 +1020,9 @@ function doLogout() {
   document.getElementById('dashboard').style.display = 'none';
   document.getElementById('login-screen').style.display = 'flex';
   document.getElementById('login-password').value = '';
+  document.getElementById('login-otp').value = '';
   document.getElementById('login-error').style.display = 'none';
+  document.getElementById('login-error').textContent = 'Identifiants invalides';
   tagBoxes = [];
 }
 
@@ -1015,6 +1045,9 @@ if (TOKEN) {
 
 // Enter key on login
 document.getElementById('login-password').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doLogin();
+});
+document.getElementById('login-otp').addEventListener('keydown', e => {
   if (e.key === 'Enter') doLogin();
 });
 
@@ -1299,6 +1332,11 @@ async function applyAssistantPrompt() {
   const selections = getAssistantSelections();
   const structuredPatch = getAssistantStructuredPatch();
   const localPromptPatch = raw ? parseAssistantPrompt(raw) : {};
+
+  if (!hasVisibilitySelection(selections, [structuredPatch, localPromptPatch])) {
+    setAssistantStatus({ mode: 'local', message: 'Choisis Prive/Public d abord' });
+    return showToast('Commence par la question 1: Prive ou Public.', true);
+  }
 
   let aiPatch = {};
   let aiMeta = { provider: 'local-parser', confidence: null, task: 'metadata-suggest' };
