@@ -17,7 +17,18 @@ function readEnv(canonicalName, legacyNames = []) {
 
   for (const legacyName of legacyNames) {
     const legacyValue = String(process.env[legacyName] || '').trim();
-    if (legacyValue) return legacyValue;
+    if (legacyValue) {
+      // Phase 2: log once per (canonical, legacy) pair so cutover can be measured
+      const cacheKey = `${canonicalName}<-${legacyName}`;
+      if (!readEnv._loggedLegacy) readEnv._loggedLegacy = new Set();
+      if (!readEnv._loggedLegacy.has(cacheKey)) {
+        readEnv._loggedLegacy.add(cacheKey);
+        try {
+          console.warn(`[env] legacy_alias_used canonical=${canonicalName} legacy=${legacyName}`);
+        } catch (_err) { /* noop */ }
+      }
+      return legacyValue;
+    }
   }
 
   return '';
