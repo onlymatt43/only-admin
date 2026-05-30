@@ -392,15 +392,15 @@
         </div>
       </div>
       <div class="assistant-quick-grid" id="assistant-quick-grid" style="display:none"></div>
-      <div id="coach-chat-question" class="assistant-status local" style="margin-bottom:10px;display:flex">Question 1/9 - Visibilite: prive ou public ?</div>
+      <div id="coach-chat-question" class="assistant-status local" style="margin-bottom:10px;display:flex">Choisis un fichier pour commencer.</div>
       <div id="coach-chat-choices" class="quick-pills" style="margin-bottom:10px"></div>
       <textarea id="meta-assistant-input" placeholder="Reponse COACH... (Entrée = envoyer, Shift+Entrée = nouvelle ligne)"></textarea>
       <div class="quick-hint">Le texte libre peut etre analyse par l'AI si `OPENAI_API_KEY` est configure. Sinon, le parser local reste actif.</div>
       <div id="assistant-status" class="assistant-status local">Coach local actif</div>
       <div class="template-actions" style="margin-top:10px">
-        <button type="button" class="btn-sm" onclick="skipCoachQuestion()">Nothing</button>
-        <button type="button" class="btn-sm" onclick="doItCoachQuestion()">Do it</button>
-        <button type="button" class="btn-sm" onclick="submitCoachChatAnswer()">Envoyer</button>
+        <button type="button" class="btn-sm" id="coach-skip-btn" onclick="skipCoachQuestion()">Nothing</button>
+        <button type="button" class="btn-sm" id="coach-doit-btn" onclick="doItCoachQuestion()">Do it</button>
+        <button type="button" class="btn-sm" id="coach-send-btn" onclick="submitCoachChatAnswer()">Envoyer</button>
         <button type="button" class="btn-sm" onclick="resetAssistantControls()">Reset menus</button>
       </div>
     </div>
@@ -428,10 +428,12 @@
     <!-- Metadata Form -->
     <div class="meta-form" id="meta-form">
       <h3>Métadonnées</h3>
+      <div id="meta-visibility-banner" class="assistant-status local" style="display:none;margin-bottom:12px"></div>
       <div class="form-grid">
         <div class="form-group">
           <label>Titre</label>
           <input type="text" id="meta-title" placeholder="Titre lisible">
+          <div class="quick-hint">Optionnel. Si vide, le titre pourra etre deduit du fichier ou complete plus tard.</div>
         </div>
         <div class="form-group">
           <label>Famille</label>
@@ -454,12 +456,14 @@
           <label>Diffusion</label>
           <div class="route-chips" id="meta-route-chips">
             <button type="button" class="route-chip" data-route="super-videotheque" onclick="toggleRouteChip(this)">🎬 Vidéothèque</button>
-            <button type="button" class="route-chip" data-route="catalog" onclick="toggleRouteChip(this)">📂 Catalogue</button>
-            <button type="button" class="route-chip" data-route="main-site" onclick="toggleRouteChip(this)">🌐 Site</button>
+            <button type="button" class="route-chip" data-route="viewer-only" onclick="toggleRouteChip(this)">🌐 Chaud-devant</button>
+            <button type="button" id="meta-projects-chip" class="route-chip" onclick="toggleProjectsMode('meta', this)">🧩 Projects</button>
             <div id="meta-dest-project-tags" class="dest-tags" style="display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center"></div>
           </div>
-          <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
+          <div class="quick-hint">Optionnel. Controle ou le media sera publie: videotheque, chaud-devant, ou un/des projects.</div>
+          <div id="meta-projects-row" style="display:none;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap">
             <select id="meta-dest-project-input" style="background:#1a1a1a;color:#fff;border:1px solid #333;padding:5px 8px;border-radius:4px;font-size:12px"><option value="">— Ajouter un projet —</option></select>
+            <input type="text" id="meta-dest-project-new" placeholder="Nouveau projet (slug)" style="background:#1a1a1a;color:#fff;border:1px solid #333;padding:5px 8px;border-radius:4px;font-size:12px;min-width:200px">
             <button type="button" class="pill-btn" onclick="addProjectDestination('meta')" style="font-size:12px">+ Projet</button>
           </div>
         </div>
@@ -475,8 +479,6 @@
             <button type="button" class="pill-btn" onclick="applyQuickTag('meta-tags','talking')">talking</button>
             <button type="button" class="pill-btn" onclick="applyQuickTag('meta-tags','9x16')">9x16</button>
             <button type="button" class="pill-btn" onclick="applyQuickTag('meta-tags','16x9')">16x9</button>
-            <button type="button" class="pill-btn" onclick="applyQuickTag('meta-tags','source:bunny-public')">source:bunny-public</button>
-            <button type="button" class="pill-btn" onclick="applyQuickTag('meta-tags','source:bunny-private')">source:bunny-private</button>
           </div>
         </div>
         <div class="form-group">
@@ -496,54 +498,28 @@
           <input type="text" id="meta-notes" placeholder="Notes personnelles">
         </div>
         <div class="form-group full">
-          <label>URL destination (preview -> full)</label>
+          <label>URL source</label>
           <input type="url" id="meta-source-url" placeholder="https://...">
-        </div>
-        <div class="form-group">
-          <label>Pricing mode</label>
-          <select id="meta-pricing-mode">
-            <option value="">Non defini</option>
-            <option value="a-la-carte">a-la-carte</option>
-            <option value="subscription">subscription</option>
-            <option value="both">both</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Lifecycle stage</label>
-          <select id="meta-lifecycle-stage">
-            <option value="">Non defini</option>
-            <option value="feature">feature</option>
-            <option value="preview-ever">preview-ever</option>
-            <option value="archive">archive</option>
-          </select>
+          <div class="quick-hint">Optionnel. Lien source ou destination externe du media. Ce champ est distinct de la diffusion.</div>
         </div>
         <div class="form-group">
           <label>CTA label</label>
           <input type="text" id="meta-cta-label" placeholder="Voir le film complet">
         </div>
         <div class="form-group">
-          <label>Qualite</label>
-          <select id="meta-quality-level">
-            <option value="draft">draft</option>
-            <option value="ready">ready</option>
-            <option value="live">live</option>
-          </select>
-        </div>
-        <div class="form-group">
           <label>Ordre</label>
           <input type="number" id="meta-sort-order" value="0" step="1">
         </div>
       </div>
-      <div class="toggle-row" style="margin-top:12px">
-        <label><input type="checkbox" id="meta-private"> Privé</label>
-        <label><input type="checkbox" id="meta-promo"> Promo/Ad (photos)</label>
-        <label><input type="checkbox" id="meta-featured"> Featured</label>
-      </div>
       <div class="progress-bar" id="progress-bar"><div class="fill" id="progress-fill"></div></div>
       <div class="progress-text" id="progress-text"></div>
+      <div id="meta-edit-banner" style="display:none;margin-top:10px;padding:10px 12px;border:1px solid #3a3a3a;border-radius:8px;background:#171717;font-size:13px">
+        <strong>Mode édition:</strong> <span id="meta-edit-label"></span>
+        <button type="button" class="btn-secondary" style="margin-left:8px" onclick="exitUploadEditMode()">Quitter édition</button>
+      </div>
       <div class="form-actions">
         <button class="btn-secondary" onclick="clearForm()">Annuler</button>
-        <button class="btn-primary" id="btn-upload" onclick="doUpload()">Uploader</button>
+        <button class="btn-primary" id="btn-upload" onclick="submitUploadForm()">Uploader</button>
       </div>
     </div>
   </div>
@@ -673,12 +649,13 @@
       <label>Diffusion</label>
       <div class="route-chips" id="edit-route-chips">
         <button type="button" class="route-chip" data-route="super-videotheque" onclick="toggleRouteChip(this)">🎬 Vidéothèque</button>
-        <button type="button" class="route-chip" data-route="catalog" onclick="toggleRouteChip(this)">📂 Catalogue</button>
-        <button type="button" class="route-chip" data-route="main-site" onclick="toggleRouteChip(this)">🌐 Site</button>
+        <button type="button" class="route-chip" data-route="viewer-only" onclick="toggleRouteChip(this)">🌐 Chaud-devant</button>
+        <button type="button" id="edit-projects-chip" class="route-chip" onclick="toggleProjectsMode('edit', this)">🧩 Projects</button>
         <div id="edit-dest-project-tags" class="dest-tags" style="display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center"></div>
       </div>
-      <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
+      <div id="edit-projects-row" style="display:none;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap">
         <select id="edit-dest-project-input" style="background:#1a1a1a;color:#fff;border:1px solid #333;padding:5px 8px;border-radius:4px;font-size:12px"><option value="">— Ajouter un projet —</option></select>
+        <input type="text" id="edit-dest-project-new" placeholder="Nouveau projet (slug)" style="background:#1a1a1a;color:#fff;border:1px solid #333;padding:5px 8px;border-radius:4px;font-size:12px;min-width:200px">
         <button type="button" class="pill-btn" onclick="addProjectDestination('edit')" style="font-size:12px">+ Projet</button>
       </div>
     </div>
@@ -705,15 +682,6 @@
     <div class="form-group full">
       <label>URL source</label>
       <input type="url" id="edit-source-url" placeholder="https://...">
-    </div>
-    <div class="form-group">
-      <label>Pricing mode</label>
-      <select id="edit-pricing-mode">
-        <option value="">Non defini</option>
-        <option value="a-la-carte">a-la-carte</option>
-        <option value="subscription">subscription</option>
-        <option value="both">both</option>
-      </select>
     </div>
     <div class="form-group">
       <label>Lifecycle stage</label>
@@ -844,34 +812,18 @@ const PHOTO_CDN_BASE_URL = localStorage.getItem('admin_photo_cdn_base_url') || '
 const ASSISTANT_CATEGORY_VALUES = ['preview', 'full-movie', 'short-video', 'clip', 'archive', 'feature', 'preview-ever'];
 const COACH_UPLOAD_DRAFT_KEY = 'only_admin_upload_coach_v1';
 const COACH_UPLOAD_STEPS = [
-  { id: 'visibility', label: 'Visibilite', question: 'Prive ou Public ?', required: true },
   { id: 'title', label: 'Titre', question: 'Quel est le titre ?', required: false },
   { id: 'category', label: 'Categorie', question: 'Quelle categorie ?', required: false },
   { id: 'description', label: 'Description', question: 'Description courte ?', required: false },
   { id: 'tags', label: 'Tags', question: 'Quels tags ?', required: false },
   { id: 'family', label: 'Famille', question: 'Quelle famille ?', required: false },
-  { id: 'diffusion', label: 'Diffusion', question: 'Ou diffuser ? (videotheque, catalog, main-site, project:slug)', required: false },
-  { id: 'date', label: 'Date', question: 'Date de tournage ? (AAAA-MM-JJ)', required: false },
-  { id: 'advanced', label: 'Avance', question: 'Infos avancees ? (pricing, lifecycle, cta, qualite, etc.)', required: false },
+  { id: 'diffusion', label: 'Diffusion', question: 'Ou diffuser ? (videotheque, chaud-devant, project:slug)', required: false },
+  { id: 'advanced', label: 'Avance', question: 'Infos avancees ? (pricing, cta, ordre, etc.)', required: false },
 ];
 let coachUploadStepIndex = 0;
-let coachVisibilityChosen = false;
 let coachFileHints = { title: '', tags: [] };
+let uploadVideoVisibility = { required: false, locked: false, isPrivate: null };
 const ASSISTANT_STRUCTURED_FIELDS = [
-  {
-    key: 'visibility',
-    label: 'Visibilite',
-    options: [
-      { value: '', label: 'Auto' },
-      { value: 'private', label: 'Private' },
-      { value: 'public', label: 'Public' }
-    ],
-    toPatch(value) {
-      if (value === 'private') return { is_private: true };
-      if (value === 'public') return { is_private: false };
-      return {};
-    }
-  },
   {
     key: 'category',
     label: 'Categorie',
@@ -887,6 +839,80 @@ const ASSISTANT_STRUCTURED_FIELDS = [
 
 function getAssistantFieldId(key) {
   return `assistant-${key}`;
+}
+
+function getSelectedUploadFiles() {
+  return selectedFiles.length > 0 ? selectedFiles : (selectedFile ? [selectedFile] : []);
+}
+
+function selectionHasVideos(files = getSelectedUploadFiles()) {
+  return files.some(file => isLikelyVideoFile(file));
+}
+
+function hasUploadContext() {
+  return getSelectedUploadFiles().length > 0 || !!editingItem;
+}
+
+function resetUploadVideoVisibility() {
+  uploadVideoVisibility = { required: false, locked: false, isPrivate: null };
+}
+
+function setUploadVideoVisibility(isPrivate, options = {}) {
+  uploadVideoVisibility = {
+    required: options.required !== false,
+    locked: options.locked !== false,
+    isPrivate: Boolean(isPrivate),
+  };
+  renderUploadVisibilityBanner();
+}
+
+function syncUploadVideoVisibilityForSelection() {
+  const files = getSelectedUploadFiles();
+  if (!files.length) {
+    resetUploadVideoVisibility();
+    renderUploadVisibilityBanner();
+    return;
+  }
+
+  if (selectionHasVideos(files)) {
+    uploadVideoVisibility = { required: true, locked: false, isPrivate: null };
+  } else {
+    resetUploadVideoVisibility();
+  }
+  renderUploadVisibilityBanner();
+}
+
+function needsVideoVisibilityChoice() {
+  return uploadVideoVisibility.required && !uploadVideoVisibility.locked;
+}
+
+function getUploadVideoVisibilityLabel() {
+  if (!uploadVideoVisibility.required || !uploadVideoVisibility.locked) return '';
+  return uploadVideoVisibility.isPrivate ? 'Privé' : 'Public';
+}
+
+function renderUploadVisibilityBanner() {
+  const banner = document.getElementById('meta-visibility-banner');
+  if (!banner) return;
+  if (!hasUploadContext() || !uploadVideoVisibility.required || !uploadVideoVisibility.locked) {
+    banner.style.display = 'none';
+    banner.textContent = '';
+    banner.className = 'assistant-status local';
+    return;
+  }
+  banner.style.display = 'flex';
+  banner.className = `assistant-status ${uploadVideoVisibility.isPrivate ? 'busy' : 'local'}`;
+  banner.textContent = `Vidéos de cette sélection: ${getUploadVideoVisibilityLabel()} (verrouillé)`;
+}
+
+function renderCoachActionButtons() {
+  const skipBtn = document.getElementById('coach-skip-btn');
+  const doItBtn = document.getElementById('coach-doit-btn');
+  const sendBtn = document.getElementById('coach-send-btn');
+  const blockShortcuts = needsVideoVisibilityChoice() || !hasUploadContext();
+  if (skipBtn) skipBtn.disabled = blockShortcuts;
+  if (doItBtn) doItBtn.disabled = blockShortcuts;
+  if (sendBtn) sendBtn.disabled = !hasUploadContext();
 }
 
 function renderAssistantControls() {
@@ -923,9 +949,12 @@ function resetAssistantControls() {
     if (element) element.value = '';
   }
   coachUploadStepIndex = 0;
-  coachVisibilityChosen = false;
   coachFileHints = { title: '', tags: [] };
-  localStorage.removeItem(COACH_UPLOAD_DRAFT_KEY);
+  if (uploadVideoVisibility.locked) {
+    saveCoachDraft();
+  } else {
+    localStorage.removeItem(COACH_UPLOAD_DRAFT_KEY);
+  }
   setAssistantStatus({ mode: 'local', message: 'Coach local actif' });
   renderCoachChatQuestion();
 }
@@ -1025,18 +1054,6 @@ function setAssistantStatus({ mode = 'local', message = 'Coach local actif' } = 
   status.textContent = message;
 }
 
-function hasVisibilitySelection(selections = {}, patches = []) {
-  if (selections.visibility === 'private' || selections.visibility === 'public') {
-    return true;
-  }
-  for (const patch of patches) {
-    if (patch && Object.prototype.hasOwnProperty.call(patch, 'is_private')) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function getCoachStep() {
   return COACH_UPLOAD_STEPS[coachUploadStepIndex] || null;
 }
@@ -1044,14 +1061,32 @@ function getCoachStep() {
 function renderCoachChatQuestion() {
   const el = document.getElementById('coach-chat-question');
   if (!el) return;
+  if (!hasUploadContext()) {
+    el.textContent = 'Choisis un fichier pour commencer.';
+    renderCoachChoices();
+    renderCoachActionButtons();
+    return;
+  }
+  if (needsVideoVisibilityChoice()) {
+    const files = getSelectedUploadFiles();
+    const mixed = files.length > 0 && files.some(file => !isLikelyVideoFile(file));
+    el.textContent = mixed
+      ? 'Avant le coach: choisis Private ou Public pour les vidéos de cette sélection.'
+      : 'Avant le coach: choisis Private ou Public pour cette vidéo.';
+    renderCoachChoices();
+    renderCoachActionButtons();
+    return;
+  }
   const step = getCoachStep();
   if (!step) {
     el.textContent = 'Coach termine. Tu peux uploader ou continuer a ajuster.';
     renderCoachChoices();
+    renderCoachActionButtons();
     return;
   }
   el.textContent = `Question ${coachUploadStepIndex + 1}/${COACH_UPLOAD_STEPS.length} - ${step.label}: ${step.question}`;
   renderCoachChoices();
+  renderCoachActionButtons();
 }
 
 function formatTitleCandidate(raw) {
@@ -1108,8 +1143,9 @@ function getTopUsedTags(limit = 8) {
 }
 
 function getCoachChoices(step) {
+  if (!hasUploadContext()) return [];
+  if (needsVideoVisibilityChoice()) return ['private', 'public'];
   if (!step) return [];
-  if (step.id === 'visibility') return ['private', 'public'];
   if (step.id === 'title') {
     const out = [];
     if (coachFileHints.title) out.push(coachFileHints.title);
@@ -1124,8 +1160,7 @@ function getCoachChoices(step) {
     return merged.length ? merged : ['do it', 'nothing'];
   }
   if (step.id === 'family') return ['do it', 'nothing'];
-  if (step.id === 'diffusion') return ['route:super-videotheque', 'route:catalog', 'route:main-site', 'nothing'];
-  if (step.id === 'date') return ['today', 'nothing'];
+  if (step.id === 'diffusion') return ['route:super-videotheque', 'route:viewer-only', 'project:nom-projet', 'nothing'];
   if (step.id === 'advanced') return ['do it', 'nothing'];
   return [];
 }
@@ -1167,20 +1202,12 @@ function getFileStemForCoach() {
   return String(file.name).replace(/\.[^/.]+$/, '').replace(/\s*\(\d+x\d+\)\s*/, '').trim();
 }
 
-function normalizeVisibilityAnswer(raw) {
-  const value = String(raw || '').trim().toLowerCase();
-  if (!value) return null;
-  if (/^(private|prive|priv[eé])$/.test(value) || /\b(private|prive|priv[eé])\b/.test(value)) return true;
-  if (/^(public|publique)$/.test(value) || /\b(public|publique)\b/.test(value)) return false;
-  return null;
-}
-
 function saveCoachDraft() {
   try {
     localStorage.setItem(COACH_UPLOAD_DRAFT_KEY, JSON.stringify({
       stepIndex: coachUploadStepIndex,
-      visibilityChosen: coachVisibilityChosen,
       fileHints: coachFileHints,
+      videoVisibility: uploadVideoVisibility,
       metadata: getMetadataPresetFields(),
     }));
   } catch (_err) {}
@@ -1195,6 +1222,15 @@ function restoreCoachDraft() {
     }
     const draft = JSON.parse(raw);
     if (draft && typeof draft === 'object') {
+      if (draft.videoVisibility && typeof draft.videoVisibility === 'object') {
+        uploadVideoVisibility = {
+          required: !!draft.videoVisibility.required,
+          locked: !!draft.videoVisibility.locked,
+          isPrivate: draft.videoVisibility.isPrivate === null || draft.videoVisibility.isPrivate === undefined
+            ? null
+            : !!draft.videoVisibility.isPrivate,
+        };
+      }
       if (draft.metadata && typeof draft.metadata === 'object') {
         applyMetadataPresetValues(draft.metadata);
       }
@@ -1205,17 +1241,22 @@ function restoreCoachDraft() {
         };
       }
       coachUploadStepIndex = Math.max(0, Math.min(COACH_UPLOAD_STEPS.length - 1, Number(draft.stepIndex) || 0));
-      coachVisibilityChosen = !!draft.visibilityChosen;
     }
   } catch (_err) {}
+  renderUploadVisibilityBanner();
   renderCoachChatQuestion();
+}
+
+function parseVisibilityAnswer(raw) {
+  const value = String(raw || '').trim().toLowerCase();
+  if (!value) return null;
+  if (/^(private|prive|priv[eé])$/.test(value)) return true;
+  if (/^(public|publique)$/.test(value)) return false;
+  return null;
 }
 
 async function requestCoachPatchForStep(step, message) {
   const selections = {
-    visibility: coachVisibilityChosen
-      ? (document.getElementById('meta-private').checked ? 'private' : 'public')
-      : '',
     coach_step: step.id,
   };
   try {
@@ -1229,17 +1270,6 @@ async function requestCoachPatchForStep(step, message) {
 async function applyCoachTextAnswer(step, rawAnswer) {
   const answer = String(rawAnswer || '').trim();
   if (!step) return false;
-
-  if (step.id === 'visibility') {
-    const parsed = normalizeVisibilityAnswer(answer);
-    if (parsed === null) {
-      showToast('Reponds Prive ou Public pour la visibilite.', true);
-      return false;
-    }
-    document.getElementById('meta-private').checked = parsed;
-    coachVisibilityChosen = true;
-    return true;
-  }
 
   if (step.id === 'title') {
     document.getElementById('meta-title').value = answer;
@@ -1273,28 +1303,11 @@ async function applyCoachTextAnswer(step, rawAnswer) {
   if (step.id === 'diffusion') {
     const parsed = parseAssistantPrompt(answer);
     if (!Array.isArray(parsed.route_tags) || parsed.route_tags.length === 0) {
-      showToast('Diffusion: utilise videotheque, catalog, main-site ou project:slug.', true);
+      showToast('Diffusion: utilise videotheque, chaud-devant ou project:slug.', true);
       return false;
     }
     setRouteTags('meta', parsed.route_tags);
     return true;
-  }
-
-  if (step.id === 'date') {
-    if (/^\d{4}-\d{2}-\d{2}$/.test(answer)) {
-      document.getElementById('meta-date-filmed').value = answer;
-      return true;
-    }
-    if (/^(today|aujourd'hui|auj)$/i.test(answer)) {
-      const now = new Date();
-      const yyyy = now.getFullYear();
-      const mm = String(now.getMonth() + 1).padStart(2, '0');
-      const dd = String(now.getDate()).padStart(2, '0');
-      document.getElementById('meta-date-filmed').value = `${yyyy}-${mm}-${dd}`;
-      return true;
-    }
-    showToast('Date attendue: AAAA-MM-JJ.', true);
-    return false;
   }
 
   if (step.id === 'advanced') {
@@ -1309,12 +1322,6 @@ async function applyCoachTextAnswer(step, rawAnswer) {
 
 async function applyCoachDoIt(step) {
   if (!step) return false;
-
-  if (step.id === 'visibility') {
-    document.getElementById('meta-private').checked = false;
-    coachVisibilityChosen = true;
-    return true;
-  }
 
   if (step.id === 'title') {
     const current = String(document.getElementById('meta-title').value || '').trim();
@@ -1360,15 +1367,6 @@ async function applyCoachDoIt(step) {
     return true;
   }
 
-  if (step.id === 'date') {
-    const now = new Date();
-    const yyyy = now.getFullYear();
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    const dd = String(now.getDate()).padStart(2, '0');
-    document.getElementById('meta-date-filmed').value = `${yyyy}-${mm}-${dd}`;
-    return true;
-  }
-
   if (step.id === 'advanced') {
     const aiPatch = await requestCoachPatchForStep(step, 'Propose des champs avances utiles pour cet upload.');
     if (Object.keys(aiPatch).length > 0) {
@@ -1389,6 +1387,23 @@ function advanceCoachStep() {
 }
 
 async function submitCoachChatAnswer() {
+  if (!hasUploadContext()) {
+    return showToast('Choisis un fichier avant de lancer le coach.', true);
+  }
+
+  if (needsVideoVisibilityChoice()) {
+    const input = document.getElementById('meta-assistant-input');
+    const parsed = parseVisibilityAnswer(String(input?.value || '').trim());
+    if (parsed === null) {
+      return showToast('Réponds uniquement Private ou Public pour les vidéos.', true);
+    }
+    setUploadVideoVisibility(parsed, { required: true, locked: true });
+    if (input) input.value = '';
+    saveCoachDraft();
+    renderCoachChatQuestion();
+    return;
+  }
+
   const step = getCoachStep();
   if (!step) return;
 
@@ -1414,18 +1429,22 @@ async function submitCoachChatAnswer() {
 }
 
 async function skipCoachQuestion() {
-  const step = getCoachStep();
-  if (!step) return;
-  if (step.id === 'visibility' && !coachVisibilityChosen) {
-    showToast('Visibilite obligatoire avant la suite.', true);
+  if (needsVideoVisibilityChoice()) {
+    showToast('Choisis Private ou Public avant de démarrer le coach.', true);
     return;
   }
+  const step = getCoachStep();
+  if (!step) return;
   advanceCoachStep();
   saveCoachDraft();
   renderCoachChatQuestion();
 }
 
 async function doItCoachQuestion() {
+  if (needsVideoVisibilityChoice()) {
+    showToast('Choisis Private ou Public avant de démarrer le coach.', true);
+    return;
+  }
   const step = getCoachStep();
   if (!step) return;
   const ok = await applyCoachDoIt(step);
@@ -1500,6 +1519,8 @@ function showDashboard() {
   renderAssistantControls();
   setupAssistantInput();
   restoreCoachDraft();
+  updateProjectChooserVisibility('meta');
+  updateProjectChooserVisibility('edit');
   loadTagBoxes();
   // Show the library immediately. Sync is now explicit via buttons only.
   refreshLibrary();
@@ -1550,8 +1571,10 @@ dropZone.addEventListener('drop', e => {
 
 function handleFileSelect(files) {
   if (!files || files.length === 0) return;
+  exitUploadEditMode();
   selectedFiles = Array.from(files).filter(Boolean);
   selectedFile = selectedFiles[0] || null;
+  syncUploadVideoVisibilityForSelection();
   const titleInput = document.getElementById('meta-title');
 
   // Auto-detect format from filename
@@ -1594,7 +1617,7 @@ function handleFileSelect(files) {
 
   // Show form
   document.getElementById('meta-form').classList.add('visible');
-  if (!coachVisibilityChosen) coachUploadStepIndex = 0;
+  coachUploadStepIndex = 0;
   saveCoachDraft();
   renderCoachChatQuestion();
 
@@ -1607,24 +1630,20 @@ function handleFileSelect(files) {
   }
 }
 
-document.getElementById('meta-private').addEventListener('change', () => {
-  coachVisibilityChosen = true;
-  saveCoachDraft();
-  renderCoachChatQuestion();
-});
-
 function clearFileSelection() {
   selectedFile = null;
   selectedFiles = [];
+  resetUploadVideoVisibility();
+  renderUploadVisibilityBanner();
   titleWasAutoFilled = false;
   document.getElementById('file-info').style.display = 'none';
   document.getElementById('file-input').value = '';
 }
 
 function clearForm() {
+  exitUploadEditMode();
   clearFileSelection();
   coachUploadStepIndex = 0;
-  coachVisibilityChosen = false;
   coachFileHints = { title: '', tags: [] };
   localStorage.removeItem(COACH_UPLOAD_DRAFT_KEY);
   document.getElementById('meta-form').classList.remove('visible');
@@ -1636,15 +1655,15 @@ function clearForm() {
   document.getElementById('meta-category').value = '';
   document.getElementById('meta-notes').value = '';
   document.getElementById('meta-source-url').value = '';
-  document.getElementById('meta-pricing-mode').value = '';
-  document.getElementById('meta-lifecycle-stage').value = '';
   document.getElementById('meta-cta-label').value = '';
-  document.getElementById('meta-quality-level').value = 'draft';
   document.getElementById('meta-sort-order').value = '0';
-  document.getElementById('meta-private').checked = false;
-  document.getElementById('meta-promo').checked = false;
-  document.getElementById('meta-featured').checked = false;
+  const metaProjectsChip = document.getElementById('meta-projects-chip');
+  if (metaProjectsChip) metaProjectsChip.classList.remove('active');
+  const metaProjectNew = document.getElementById('meta-dest-project-new');
+  if (metaProjectNew) metaProjectNew.value = '';
+  updateProjectChooserVisibility('meta');
   hideProgress();
+  renderUploadVisibilityBanner();
   renderCoachChatQuestion();
 }
 
@@ -1660,17 +1679,46 @@ function getMetadataPresetFields() {
     format: document.getElementById('meta-format').value || '16x9',
     notes: document.getElementById('meta-notes').value,
     source_url: document.getElementById('meta-source-url').value.trim(),
-    pricing_mode: document.getElementById('meta-pricing-mode').value,
-    lifecycle_stage: document.getElementById('meta-lifecycle-stage').value,
     cta_label: document.getElementById('meta-cta-label').value,
-    quality_level: document.getElementById('meta-quality-level').value,
     sort_order: Number(document.getElementById('meta-sort-order').value || 0),
-    is_private: document.getElementById('meta-private').checked,
-    is_promo: document.getElementById('meta-promo').checked,
-    is_featured: document.getElementById('meta-featured').checked,
     route_tags: routeTags,
     destinations: routeTags.map(routeTagToLegacyDestination).filter(Boolean)
   };
+}
+
+function isValidHttpUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return true;
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch (_err) {
+    return false;
+  }
+}
+
+function validateMetadataPresetFields(metadata, options = {}) {
+  const requireFile = options.requireFile !== false;
+  const errors = [];
+  const sourceUrl = String(metadata?.source_url || '').trim();
+
+  if (requireFile) {
+    const files = getSelectedUploadFiles();
+    if (!files.length) {
+      errors.push('Aucun fichier sélectionné.');
+    }
+    if (selectionHasVideos(files) && !uploadVideoVisibility.locked) {
+      errors.push('Choisis Private ou Public pour les vidéos avant de continuer.');
+    }
+  } else if (editingItem?.type === 'video' && !uploadVideoVisibility.locked) {
+    errors.push('La visibilité vidéo doit être verrouillée avant la sauvegarde.');
+  }
+
+  if (sourceUrl && !isValidHttpUrl(sourceUrl)) {
+    errors.push('URL source invalide. Utilise http:// ou https://.');
+  }
+
+  return errors;
 }
 
 function applyMetadataPresetValues(data = {}) {
@@ -1684,17 +1732,8 @@ function applyMetadataPresetValues(data = {}) {
   if (data.format !== undefined) document.getElementById('meta-format').value = String(data.format || '16x9');
   if (data.notes !== undefined) document.getElementById('meta-notes').value = String(data.notes || '');
   if (data.source_url !== undefined) document.getElementById('meta-source-url').value = String(data.source_url || '');
-  if (data.pricing_mode !== undefined) document.getElementById('meta-pricing-mode').value = String(data.pricing_mode || '');
-  if (data.lifecycle_stage !== undefined) document.getElementById('meta-lifecycle-stage').value = String(data.lifecycle_stage || '');
   if (data.cta_label !== undefined) document.getElementById('meta-cta-label').value = String(data.cta_label || '');
-  if (data.quality_level !== undefined) document.getElementById('meta-quality-level').value = String(data.quality_level || 'draft');
   if (data.sort_order !== undefined) document.getElementById('meta-sort-order').value = String(data.sort_order || 0);
-  if (data.is_private !== undefined) {
-    document.getElementById('meta-private').checked = Boolean(data.is_private);
-    coachVisibilityChosen = true;
-  }
-  if (data.is_promo !== undefined) document.getElementById('meta-promo').checked = Boolean(data.is_promo);
-  if (data.is_featured !== undefined) document.getElementById('meta-featured').checked = Boolean(data.is_featured);
   if (data.route_tags !== undefined) setRouteTags('meta', data.route_tags);
   else if (data.destinations !== undefined) setDestinations('meta', data.destinations);
 }
@@ -1713,23 +1752,85 @@ function copyEditingItemToUploadForm() {
     format: document.getElementById('edit-format').value || '16x9',
     notes: document.getElementById('edit-notes').value,
     source_url: document.getElementById('edit-source-url').value.trim(),
-    pricing_mode: document.getElementById('edit-pricing-mode').value,
     lifecycle_stage: document.getElementById('edit-lifecycle-stage').value,
     cta_label: document.getElementById('edit-cta-label').value,
     quality_level: document.getElementById('edit-quality-level').value || 'draft',
     sort_order: Number(document.getElementById('edit-sort-order').value || 0),
-    is_private: document.getElementById('edit-private').checked,
-    is_promo: (document.getElementById('edit-category').value || '').trim().toLowerCase() === 'promo',
-    is_featured: document.getElementById('edit-featured').checked,
     route_tags: routeTags,
     destinations: routeTags.map(routeTagToLegacyDestination).filter(Boolean)
   };
 
   applyMetadataPresetValues(uploadPreset);
+  resetUploadVideoVisibility();
+  renderUploadVisibilityBanner();
   titleWasAutoFilled = false;
   document.getElementById('meta-form').classList.add('visible');
   switchTab('upload', document.querySelector('[data-testid="tab-upload"]'));
+  renderCoachChatQuestion();
   showToast('Infos copiées vers l’upload');
+}
+
+function updateUploadPrimaryButton() {
+  const btn = document.getElementById('btn-upload');
+  if (!btn) return;
+  btn.textContent = editingItem ? 'Sauvegarder' : 'Uploader';
+}
+
+function exitUploadEditMode() {
+  editingItem = null;
+  const banner = document.getElementById('meta-edit-banner');
+  const label = document.getElementById('meta-edit-label');
+  if (banner) banner.style.display = 'none';
+  if (label) label.textContent = '';
+  if (!getSelectedUploadFiles().length) {
+    resetUploadVideoVisibility();
+    renderUploadVisibilityBanner();
+  }
+  updateUploadPrimaryButton();
+}
+
+function startEditInUpload(id) {
+  const item = mediaItems.find(i => i.id === id);
+  if (!item) return;
+
+  editingItem = item;
+  if (item.type === 'video') {
+    setUploadVideoVisibility(!!item.is_private, { required: true, locked: true });
+  } else {
+    resetUploadVideoVisibility();
+    renderUploadVisibilityBanner();
+  }
+  applyMetadataPresetValues({
+    title: item.title || '',
+    family_slug: item.family_slug || '',
+    category: item.category || '',
+    description: item.description || '',
+    tags: Array.isArray(item.tags) ? item.tags : [],
+    date_filmed: item.date_filmed || '',
+    format: item.primary_format || '16x9',
+    notes: item.notes || '',
+    source_url: item.source_url || '',
+    lifecycle_stage: item.lifecycle_stage || '',
+    cta_label: item.cta_label || '',
+    quality_level: item.quality_level || 'draft',
+    sort_order: Number(item.sort_order || 0),
+    route_tags: Array.isArray(item.route_tags) ? item.route_tags : [],
+    destinations: Array.isArray(item.destinations) ? item.destinations : [],
+  });
+
+  clearFileSelection();
+  titleWasAutoFilled = false;
+
+  const banner = document.getElementById('meta-edit-banner');
+  const label = document.getElementById('meta-edit-label');
+  if (label) label.textContent = `${item.title || item.id} (${item.id})`;
+  if (banner) banner.style.display = '';
+
+  document.getElementById('meta-form').classList.add('visible');
+  switchTab('upload', document.querySelector('[data-testid="tab-upload"]'));
+  updateUploadPrimaryButton();
+  renderCoachChatQuestion();
+  showToast('Edition ouverte dans Upload');
 }
 
 function parseAssistantPrompt(raw) {
@@ -1741,17 +1842,9 @@ function parseAssistantPrompt(raw) {
     if (lower.includes(c)) { patch.category = c; break; }
   }
 
-  if (/(\bprive\b|\bprivé\b|private)/i.test(lower)) patch.is_private = true;
-  if (/(\bpublic\b|publique)/i.test(lower)) patch.is_private = false;
-  if (/\bfeatured\b/i.test(lower)) patch.is_featured = true;
-
   if (/\bready\b/i.test(lower)) patch.quality_level = 'ready';
   else if (/\blive\b/i.test(lower)) patch.quality_level = 'live';
   else if (/\bdraft\b/i.test(lower)) patch.quality_level = 'draft';
-
-  if (/\ba-la-carte\b|\balacarte\b/i.test(lower)) patch.pricing_mode = 'a-la-carte';
-  else if (/\bsubscription\b/i.test(lower)) patch.pricing_mode = 'subscription';
-  else if (/\bboth\b/i.test(lower)) patch.pricing_mode = 'both';
 
   if (/\bfeature\b/i.test(lower)) patch.lifecycle_stage = 'feature';
   else if (/\bpreview-ever\b/i.test(lower)) patch.lifecycle_stage = 'preview-ever';
@@ -1767,8 +1860,8 @@ function parseAssistantPrompt(raw) {
   if (cta) patch.cta_label = cta[1].trim();
 
   const routeTags = [];
-  if (/\bcatalog\b|\bcatalogue\b/i.test(lower)) routeTags.push('route:catalog');
-  if (/\bmain-site\b|\bsite principal\b/i.test(lower)) routeTags.push('route:main-site');
+  if (/\bviewer-only\b|\bchaud-devant\b|\bsite principal\b/i.test(lower)) routeTags.push('route:viewer-only');
+  if (/\bvideotheque\b|\bvid[eé]oth[eè]que\b|\bsuper-videotheque\b/i.test(lower)) routeTags.push('route:super-videotheque');
   if (/\bvid[eé]oth[eè]que\b|\bsuper-videotheque\b/i.test(lower)) routeTags.push('route:super-videotheque');
   for (const m of text.matchAll(/project\s*:\s*([a-z0-9-]+)/gi)) {
     routeTags.push(`route:project:${m[1].toLowerCase()}`);
@@ -1837,11 +1930,6 @@ async function applyAssistantPrompt() {
   const selections = getAssistantSelections();
   const structuredPatch = getAssistantStructuredPatch();
   const localPromptPatch = raw ? parseAssistantPrompt(raw) : {};
-
-  if (!hasVisibilitySelection(selections, [structuredPatch, localPromptPatch])) {
-    setAssistantStatus({ mode: 'local', message: 'Choisis Prive/Public d abord' });
-    return showToast('Commence par la question 1: Prive ou Public.', true);
-  }
 
   let aiPatch = {};
   let aiMeta = { provider: 'local-parser', confidence: null, task: 'metadata-suggest' };
@@ -1940,14 +2028,8 @@ function collectTagBoxPayloadFromMetaForm() {
     format: document.getElementById('meta-format').value || '16x9',
     notes: document.getElementById('meta-notes').value,
     source_url: document.getElementById('meta-source-url').value.trim(),
-    pricing_mode: document.getElementById('meta-pricing-mode').value,
-    lifecycle_stage: document.getElementById('meta-lifecycle-stage').value,
     cta_label: document.getElementById('meta-cta-label').value,
-    quality_level: document.getElementById('meta-quality-level').value,
     sort_order: Number(document.getElementById('meta-sort-order').value || 0),
-    is_private: document.getElementById('meta-private').checked,
-    is_promo: document.getElementById('meta-promo').checked,
-    is_featured: document.getElementById('meta-featured').checked,
     route_tags: getRouteTags('meta'),
   };
 }
@@ -1962,10 +2044,18 @@ function applyTagBoxPayloadToPrefix(prefix, payload = {}, boxSlug = '') {
   if (p.date_filmed !== undefined) document.getElementById(`${prefix}-date-filmed`).value = String(p.date_filmed || '');
   if (p.notes !== undefined) document.getElementById(`${prefix}-notes`).value = String(p.notes || '');
   if (p.source_url !== undefined) document.getElementById(`${prefix}-source-url`).value = String(p.source_url || '');
-  if (p.pricing_mode !== undefined) document.getElementById(`${prefix}-pricing-mode`).value = String(p.pricing_mode || '');
-  if (p.lifecycle_stage !== undefined) document.getElementById(`${prefix}-lifecycle-stage`).value = String(p.lifecycle_stage || '');
-  if (p.cta_label !== undefined) document.getElementById(`${prefix}-cta-label`).value = String(p.cta_label || '');
-  if (p.quality_level !== undefined) document.getElementById(`${prefix}-quality-level`).value = String(p.quality_level || 'draft');
+  if (p.lifecycle_stage !== undefined) {
+    const el = document.getElementById(`${prefix}-lifecycle-stage`);
+    if (el) el.value = String(p.lifecycle_stage || '');
+  }
+  if (p.cta_label !== undefined) {
+    const el = document.getElementById(`${prefix}-cta-label`);
+    if (el) el.value = String(p.cta_label || '');
+  }
+  if (p.quality_level !== undefined) {
+    const el = document.getElementById(`${prefix}-quality-level`);
+    if (el) el.value = String(p.quality_level || 'draft');
+  }
   if (p.sort_order !== undefined) document.getElementById(`${prefix}-sort-order`).value = String(Number(p.sort_order) || 0);
 
   const formatEl = document.getElementById(`${prefix}-format`);
@@ -2086,6 +2176,11 @@ async function doUpload() {
   btn.disabled = true;
 
   const baseMetadata = getMetadataPresetFields();
+  const validationErrors = validateMetadataPresetFields(baseMetadata, { requireFile: true });
+  if (validationErrors.length) {
+    btn.disabled = false;
+    return showToast(validationErrors[0], true);
+  }
   const totalFiles = files.length;
   const multiple = totalFiles > 1;
   const baseTitle = baseMetadata.title;
@@ -2123,18 +2218,16 @@ async function doUpload() {
             type: 'video',
             title,
             family_slug: baseMetadata.family_slug,
+            is_private: uploadVideoVisibility.isPrivate,
             format: uploadFormat,
-            is_private: baseMetadata.is_private,
             description: baseMetadata.description,
             tags,
             category: baseMetadata.category,
             source_url: baseMetadata.source_url,
-            pricing_mode: baseMetadata.pricing_mode,
             lifecycle_stage: baseMetadata.lifecycle_stage,
             cta_label: baseMetadata.cta_label,
             quality_level: baseMetadata.quality_level,
             sort_order: baseMetadata.sort_order,
-            is_featured: baseMetadata.is_featured,
             date_filmed: baseMetadata.date_filmed || null,
             notes: baseMetadata.notes,
             route_tags: baseMetadata.route_tags,
@@ -2156,17 +2249,14 @@ async function doUpload() {
             title,
             file: base64,
             fileName: file.name,
-            isPromo: baseMetadata.is_promo,
             description: baseMetadata.description,
             tags,
             category: baseMetadata.category,
             source_url: baseMetadata.source_url,
-            pricing_mode: baseMetadata.pricing_mode,
             lifecycle_stage: baseMetadata.lifecycle_stage,
             cta_label: baseMetadata.cta_label,
             quality_level: baseMetadata.quality_level,
             sort_order: baseMetadata.sort_order,
-            is_featured: baseMetadata.is_featured,
             date_filmed: baseMetadata.date_filmed || null,
             notes: baseMetadata.notes,
             route_tags: baseMetadata.route_tags,
@@ -2196,6 +2286,57 @@ async function doUpload() {
   } finally {
     btn.disabled = false;
   }
+}
+
+async function saveUploadEdit() {
+  if (!editingItem) return;
+
+  const base = getMetadataPresetFields();
+  const validationErrors = validateMetadataPresetFields(base, { requireFile: false });
+  if (validationErrors.length) {
+    return showToast(validationErrors[0], true);
+  }
+  const payload = {
+    title: base.title,
+    family_slug: base.family_slug,
+    description: base.description,
+    tags: base.tags,
+    category: base.category,
+    date_filmed: base.date_filmed || null,
+    primary_format: base.format || '16x9',
+    notes: base.notes,
+    source_url: base.source_url,
+    lifecycle_stage: base.lifecycle_stage,
+    cta_label: base.cta_label,
+    quality_level: base.quality_level,
+    sort_order: base.sort_order,
+    route_tags: base.route_tags,
+    destinations: base.destinations,
+  };
+
+  const btn = document.getElementById('btn-upload');
+  btn.disabled = true;
+  try {
+    await api(`/api/admin-api?action=update&id=${encodeURIComponent(editingItem.id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    });
+    showToast('Modifications sauvegardées');
+    refreshLibrary();
+    exitUploadEditMode();
+  } catch (e) {
+    showToast('Erreur: ' + e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function submitUploadForm() {
+  if (editingItem) {
+    await saveUploadEdit();
+    return;
+  }
+  await doUpload();
 }
 
 function tusUpload(file, uploadInfo) {
@@ -2336,6 +2477,7 @@ function applyQuickTag(inputId, tag) {
   const hasTag = tags.some(t => t.toLowerCase() === String(tag).toLowerCase());
   if (!hasTag) tags.push(tag);
   input.value = tags.join(', ');
+  if (inputId.startsWith('meta-')) saveCoachDraft();
   input.focus();
 }
 
@@ -2343,6 +2485,7 @@ function applyQuickCategory(inputId, category) {
   const input = document.getElementById(inputId);
   if (!input) return;
   input.value = category;
+  if (inputId.startsWith('meta-')) saveCoachDraft();
   input.focus();
 }
 
@@ -2351,7 +2494,11 @@ function normalizeRouteTag(value) {
   const raw = String(value || '').trim().toLowerCase();
   if (!raw) return '';
   if (raw.startsWith('route:')) return raw;
-  if (raw.startsWith('project:') || raw === 'catalog' || raw === 'main-site') return `route:${raw}`;
+  if (raw.startsWith('project:') || raw === 'super-videotheque' || raw === 'viewer-only' || raw === 'chaud-devant' || raw === 'catalog' || raw === 'main-site') {
+    if (raw === 'chaud-devant' || raw === 'main-site') return 'route:viewer-only';
+    if (raw === 'catalog') return 'route:super-videotheque';
+    return `route:${raw}`;
+  }
   return '';
 }
 
@@ -2363,6 +2510,24 @@ function routeTagToLegacyDestination(routeTag) {
 
 function toggleRouteChip(btn) {
   btn.classList.toggle('active');
+  if (btn.closest('#meta-route-chips')) saveCoachDraft();
+}
+
+function updateProjectChooserVisibility(prefix) {
+  const row = document.getElementById(`${prefix}-projects-row`);
+  const chip = document.getElementById(`${prefix}-projects-chip`);
+  if (!row || !chip) return;
+  const hasProjectTags = document.querySelectorAll(`#${prefix}-dest-project-tags .dest-tag`).length > 0;
+  const enabled = chip.classList.contains('active') || hasProjectTags;
+  row.style.display = enabled ? 'flex' : 'none';
+  chip.classList.toggle('active', enabled);
+}
+
+function toggleProjectsMode(prefix, btn) {
+  if (!btn) return;
+  btn.classList.toggle('active');
+  updateProjectChooserVisibility(prefix);
+  if (prefix === 'meta') saveCoachDraft();
 }
 
 function getRouteTags(prefix) {
@@ -2403,6 +2568,8 @@ function setRouteTags(prefix, routeTags) {
       _addDestTagEl(prefix, routeValue, slug, tagsEl);
     });
   }
+  updateProjectChooserVisibility(prefix);
+  if (prefix === 'meta') saveCoachDraft();
 }
 
 function setDestinations(prefix, destinations) {
@@ -2425,44 +2592,129 @@ function _addDestTagEl(prefix, dest, label, container) {
   rm.type = 'button';
   rm.textContent = '×';
   rm.style.cssText = 'background:none;border:none;cursor:pointer;color:#888;padding:0;font-size:12px;line-height:1';
-  rm.onclick = () => span.remove();
+  rm.onclick = () => {
+    span.remove();
+    updateProjectChooserVisibility(prefix);
+    if (prefix === 'meta') saveCoachDraft();
+  };
   span.appendChild(labelNode);
   span.appendChild(rm);
   container.appendChild(span);
 }
 
 function addProjectDestination(prefix) {
-  const input = document.getElementById(`${prefix}-dest-project-input`);
-  const slug = (input.value || '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '');
+  const select = document.getElementById(`${prefix}-dest-project-input`);
+  const newInput = document.getElementById(`${prefix}-dest-project-new`);
+  const newRaw = String(newInput?.value || '').trim();
+  const base = newRaw || String(select?.value || '').trim();
+  const slug = base.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '');
   if (!slug) return;
-  const label = (input.tagName === 'SELECT' && input.selectedIndex >= 0)
-    ? (input.options[input.selectedIndex].text || slug)
-    : slug;
+  const label = newRaw || ((select && select.tagName === 'SELECT' && select.selectedIndex >= 0)
+    ? (select.options[select.selectedIndex].text || slug)
+    : slug);
   _addDestTagEl(prefix, `project:${slug}`, label, null);
-  input.value = '';
+  if (select) select.value = '';
+  if (newInput) newInput.value = '';
+  updateProjectChooserVisibility(prefix);
+  if (prefix === 'meta') saveCoachDraft();
+}
+
+let cachedRemoteProjects = null;
+
+function prettifyProjectSlug(slug) {
+  const raw = String(slug || '').trim();
+  if (!raw) return '';
+  return raw
+    .split('-')
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function collectProjectOptionsFromItems(items) {
+  const map = new Map();
+  const arr = Array.isArray(items) ? items : [];
+  arr.forEach(item => {
+    const routeTags = Array.isArray(item?.route_tags) ? item.route_tags : [];
+    const destinations = Array.isArray(item?.destinations) ? item.destinations : [];
+    const routes = [...routeTags, ...destinations]
+      .map(v => String(v || '').trim().toLowerCase())
+      .filter(Boolean);
+
+    routes.forEach(route => {
+      const normalized = route.startsWith('route:') ? route.slice(6) : route;
+      if (!normalized.startsWith('project:')) return;
+      const slug = normalized.slice('project:'.length).trim();
+      if (!slug) return;
+      if (!map.has(slug)) map.set(slug, prettifyProjectSlug(slug) || slug);
+    });
+  });
+  return map;
+}
+
+function renderProjectOptions(projectMap) {
+  ['meta', 'edit'].forEach(prefix => {
+    const sel = document.getElementById(`${prefix}-dest-project-input`);
+    if (!sel || sel.tagName !== 'SELECT') return;
+    const currentValue = sel.value;
+    sel.innerHTML = '<option value="">— Ajouter un projet —</option>';
+    Array.from(projectMap.entries())
+      .sort((a, b) => a[1].localeCompare(b[1], 'fr', { sensitivity: 'base' }))
+      .forEach(([slug, title]) => {
+        const opt = document.createElement('option');
+        opt.value = slug;
+        opt.textContent = title || slug;
+        sel.appendChild(opt);
+      });
+    if (currentValue && projectMap.has(currentValue)) sel.value = currentValue;
+  });
 }
 
 async function loadProjectOptions() {
+  const projectMap = collectProjectOptionsFromItems(allMediaItems);
   try {
-    if (!PROJECTS_API_URL) return;
-    const r = await fetch(PROJECTS_API_URL);
-    if (!r.ok) return;
-    const { projects } = await r.json();
-    ['meta', 'edit'].forEach(prefix => {
-      const sel = document.getElementById(`${prefix}-dest-project-input`);
-      if (!sel || sel.tagName !== 'SELECT') return;
-      projects.forEach(p => {
-        const opt = document.createElement('option');
-        opt.value = p.slug;
-        opt.textContent = p.title || p.slug;
-        sel.appendChild(opt);
-      });
+    if (PROJECTS_API_URL && !Array.isArray(cachedRemoteProjects)) {
+      const r = await fetch(PROJECTS_API_URL);
+      if (r.ok) {
+        const { projects } = await r.json();
+        cachedRemoteProjects = Array.isArray(projects) ? projects : [];
+      }
+    }
+    (Array.isArray(cachedRemoteProjects) ? cachedRemoteProjects : []).forEach(p => {
+      const slug = String(p?.slug || '').trim().toLowerCase();
+      if (!slug) return;
+      const title = String(p?.title || '').trim() || prettifyProjectSlug(slug) || slug;
+      projectMap.set(slug, title);
     });
   } catch (e) {
     console.warn('Could not load project list:', e);
   }
+  renderProjectOptions(projectMap);
 }
 loadProjectOptions();
+
+[
+  'meta-title',
+  'meta-family',
+  'meta-category',
+  'meta-description',
+  'meta-tags',
+  'meta-date-filmed',
+  'meta-format',
+  'meta-notes',
+  'meta-source-url',
+  'meta-cta-label',
+  'meta-sort-order',
+  'meta-dest-project-input',
+  'meta-dest-project-new'
+].forEach((id) => {
+  const element = document.getElementById(id);
+  if (!element) return;
+  const eventName = element.tagName === 'SELECT' ? 'change' : 'input';
+  element.addEventListener(eventName, () => {
+    saveCoachDraft();
+  });
+});
 
 document.getElementById('meta-title').addEventListener('input', () => {
   titleWasAutoFilled = false;
@@ -2485,6 +2737,7 @@ async function refreshLibrary() {
 
   try {
     allMediaItems = await api('/api/admin-api?action=list');
+    await loadProjectOptions();
     renderFilterBands();
 
     mediaItems = allMediaItems.filter(item => {
@@ -2579,7 +2832,7 @@ function renderMediaGrid() {
         ? `<img src="${safePreview}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="if(this.dataset.fallbackApplied==='1'){this.style.display='none';this.parentElement.classList.add('no-image');return;}this.dataset.fallbackApplied='1';this.src='${safeFavicon}';">`
         : `<div class="link-thumb-fallback">${safeFavicon ? `<img src="${safeFavicon}" alt="" loading="lazy">` : ''}<span>${esc(linkMeta.initial)}</span></div>`;
       return `
-        <div class="media-card is-link" onclick="openEditPanel('${item.id}')">
+        <div class="media-card is-link" onclick="startEditInUpload('${item.id}')">
           <div class="thumb ${safePreview ? '' : 'no-image'}">${thumbHtml}</div>
           <div class="info">
             <div class="link-card-site">${esc(siteName || item.title || item.id || 'Lien externe')}</div>
@@ -2609,7 +2862,7 @@ function renderMediaGrid() {
       : `<span style="font-size:32px">${fallbackIcon}</span>`;
 
     return `
-      <div class="media-card" onclick="openEditPanel('${item.id}')">
+      <div class="media-card" onclick="startEditInUpload('${item.id}')">
         <div class="thumb">${thumbHtml}</div>
         <div class="info">
           <h4>${esc(item.title || item.id)}</h4>
@@ -2710,11 +2963,12 @@ function openEditPanel(id) {
   document.getElementById('edit-status').value = editingItem.status || 'published';
   document.getElementById('edit-notes').value = editingItem.notes || '';
   document.getElementById('edit-source-url').value = editingItem.source_url || '';
-  document.getElementById('edit-pricing-mode').value = editingItem.pricing_mode || '';
   document.getElementById('edit-lifecycle-stage').value = editingItem.lifecycle_stage || '';
   document.getElementById('edit-cta-label').value = editingItem.cta_label || '';
   document.getElementById('edit-quality-level').value = editingItem.quality_level || 'draft';
   document.getElementById('edit-sort-order').value = Number(editingItem.sort_order || 0);
+  document.getElementById('edit-dest-project-input').value = '';
+  document.getElementById('edit-dest-project-new').value = '';
   document.getElementById('edit-private').checked = !!editingItem.is_private;
   document.getElementById('edit-locked').checked = !!editingItem.is_locked;
   document.getElementById('edit-featured').checked = !!editingItem.is_featured;
@@ -2772,6 +3026,8 @@ function renderValidationWarnings(warnings) {
 
 function closeEditPanel() {
   editingItem = null;
+  document.getElementById('edit-dest-project-input').value = '';
+  document.getElementById('edit-dest-project-new').value = '';
   document.getElementById('edit-overlay').classList.remove('visible');
   document.getElementById('edit-panel').classList.remove('visible');
 }
@@ -2796,7 +3052,6 @@ async function doSaveEdit() {
         status: document.getElementById('edit-status').value || (editingItem.status || 'published'),
         notes: document.getElementById('edit-notes').value,
         source_url: document.getElementById('edit-source-url').value,
-        pricing_mode: document.getElementById('edit-pricing-mode').value,
         lifecycle_stage: document.getElementById('edit-lifecycle-stage').value,
         cta_label: document.getElementById('edit-cta-label').value,
         quality_level: document.getElementById('edit-quality-level').value,
@@ -2855,7 +3110,6 @@ async function applyEditPanelAI() {
     }
     if (patch.date_filmed) document.getElementById('edit-date-filmed').value = patch.date_filmed;
     if (patch.notes) document.getElementById('edit-notes').value = patch.notes;
-    if (patch.pricing_mode) document.getElementById('edit-pricing-mode').value = patch.pricing_mode;
     if (patch.lifecycle_stage) document.getElementById('edit-lifecycle-stage').value = patch.lifecycle_stage;
     if (patch.cta_label) document.getElementById('edit-cta-label').value = patch.cta_label;
     if (patch.quality_level) document.getElementById('edit-quality-level').value = patch.quality_level;

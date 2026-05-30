@@ -14,9 +14,16 @@ Service admin central pour la gestion du catalogue media (videos, photos, liens)
 ### Admin API
 
 Route: `GET/POST /api/admin-api?action=...`
-Auth: `Authorization: Bearer ADMIN_TOKEN`
+Auth: `Authorization: Bearer <admin-session-token>`
+
+Session login:
+- `POST /api/admin-api?action=auth`
+- body: `{ "token": "ADMIN_TOKEN", "otp": "123456" }`
+- retourne un token de session court (`token`) a reutiliser dans le header Authorization.
+- si `ADMIN_TOTP_SECRET` est configure, `otp` devient obligatoire et le mode direct `Bearer ADMIN_TOKEN` est desactive (mode simple OTP-only).
 
 Actions actives:
+- `auth`
 - `list`
 - `env-health`
 - `update`
@@ -62,6 +69,17 @@ Proxy image avec garde-fous SSRF (blocage localhost/reseaux prives, protocoles l
 - `ADMIN_TOKEN`
 - `TURSO_DB_URL` (alias accepte: `TURSO_DATABASE_URL`)
 - `TURSO_DB_TOKEN` (alias accepte: `TURSO_AUTH_TOKEN`)
+
+### Auth session / 2FA (optionnel recommande)
+
+- `ADMIN_SESSION_SECRET` (fallback: `ADMIN_TOKEN`)
+- `ADMIN_SESSION_TTL_SECONDS` (defaut: `43200`)
+- `ADMIN_TOTP_SECRET` (base32, pour Google Authenticator)
+- `ADMIN_TOTP_STEP_SECONDS` (defaut: `30`)
+- `ADMIN_TOTP_WINDOW` (defaut: `1`)
+
+Provisioning QR:
+- URI a encoder en QR: `otpauth://totp/OnlyMatt%20Admin:only-admin-main?secret=ADMIN_TOTP_SECRET&issuer=OnlyMatt%20Admin&algorithm=SHA1&digits=6&period=30`
 
 ### Lecture service-to-service
 

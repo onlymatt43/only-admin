@@ -343,8 +343,6 @@ function ensureBunnyStorageConfig() {
 }
 
 const PREVIEW_CATEGORIES = new Set(['preview', 'preview-ever', 'short-video']);
-const FULL_CATEGORIES = new Set(['full-movie']);
-const VALID_PRICING_MODES = new Set(['a-la-carte', 'subscription', 'both']);
 const VALID_LIFECYCLE_STAGES = new Set(['feature', 'preview-ever', 'archive']);
 const ROUTE_TAG_PREFIX = 'route:';
 
@@ -380,7 +378,9 @@ function destinationFromRouteTag(tag) {
   const norm = normalizeRouteTag(tag);
   if (!norm) return '';
   const route = norm.slice(ROUTE_TAG_PREFIX.length);
-  if (route === 'catalog' || route === 'main-site') return route;
+  if (route === 'super-videotheque' || route === 'viewer-only') return route;
+  if (route === 'catalog') return 'super-videotheque';
+  if (route === 'main-site' || route === 'chaud-devant') return 'viewer-only';
   if (route.startsWith('project:')) return route;
   return '';
 }
@@ -449,7 +449,6 @@ function buildValidationWarnings(item) {
   const category = String(item.category || '').trim().toLowerCase();
   const sourceUrl = String(item.source_url || '').trim();
   const familySlug = String(item.family_slug || '').trim();
-  const pricingMode = normalizePricingMode(item.pricing_mode || '');
   const lifecycleStage = normalizeLifecycleStage(item.lifecycle_stage || '');
 
   if (type === 'video' && !familySlug) {
@@ -465,22 +464,6 @@ function buildValidationWarnings(item) {
       level: 'warn',
       code: 'missing_preview_destination',
       message: 'Preview sans destination (source_url) vers la version complete.'
-    });
-  }
-
-  if (FULL_CATEGORIES.has(category) && !pricingMode) {
-    warnings.push({
-      level: 'warn',
-      code: 'missing_pricing_mode',
-      message: 'Full-movie sans pricing_mode (a-la-carte, subscription, both).'
-    });
-  }
-
-  if (pricingMode && !VALID_PRICING_MODES.has(pricingMode)) {
-    warnings.push({
-      level: 'warn',
-      code: 'invalid_pricing_mode',
-      message: 'pricing_mode invalide. Valeurs: a-la-carte, subscription, both.'
     });
   }
 
@@ -856,7 +839,7 @@ async function actionList(req, res, db) {
 /**
  * Fire-and-forget: notifie les plateformes consommatrices quand un item est sauvegardé.
  * - project routes: invalide le cache via POST /api/revalidate?slug=X
- * - catalog route: déclenche un sync via POST /api/webhook/sync
+ * - videotheque / viewer-only: déclenche un sync via POST /api/webhook/sync
  * Ne bloque jamais l'appelant (erreurs loguées silencieusement).
  */
 function notifyDestinations(destinations) {
@@ -882,7 +865,7 @@ function notifyDestinations(destinations) {
     }
   }
 
-  if (catalogWebhookSecret && dests.includes('catalog')) {
+  if (catalogWebhookSecret && (dests.includes('catalog') || dests.includes('super-videotheque') || dests.includes('viewer-only'))) {
     const targets = [catalogSyncUrl, viewerSyncUrl].filter(Boolean);
     for (const target of targets) {
       fetch(`${target}/api/webhook/sync`, {
@@ -1698,10 +1681,9 @@ async function actionSyncVideos(req, res, db) {
 
     if (lib === 'private' || cat === 'full-movie' || cat === 'short-video' || cat === 'preview') {
       destinations.add('super-videotheque');
-      destinations.add('catalog');
     } else {
-      destinations.add('catalog');
-      destinations.add('main-site');
+      destinations.add('super-videotheque');
+      destinations.add('viewer-only');
     }
 
     return {
