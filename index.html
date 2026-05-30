@@ -810,12 +810,12 @@ const ASSISTANT_CATEGORY_VALUES = ['preview', 'full-movie', 'short-video', 'clip
 const COACH_UPLOAD_DRAFT_KEY = 'only_admin_upload_coach_v1';
 const COACH_UPLOAD_STEPS = [
   { id: 'title', label: 'Titre', question: 'Quel est le titre ?', required: false },
+  { id: 'diffusion', label: 'Diffusion', question: 'Ou diffuser ? (videotheque, viewer-only, project:slug)', required: false },
   { id: 'category', label: 'Categorie', question: 'Quelle categorie ?', required: false },
   { id: 'description', label: 'Description', question: 'Description courte ?', required: false },
   { id: 'tags', label: 'Tags', question: 'Quels tags ?', required: false },
   { id: 'family', label: 'Famille', question: 'Quelle famille ?', required: false },
-  { id: 'diffusion', label: 'Diffusion', question: 'Ou diffuser ? (videotheque, viewer-only, project:slug)', required: false },
-  { id: 'advanced', label: 'Avance', question: 'Infos avancees ? (pricing, cta, ordre, etc.)', required: false },
+  { id: 'source_url', label: 'URL source', question: 'Quelle URL source garder ? (http:// ou https://)', required: false },
 ];
 let coachUploadStepIndex = 0;
 let coachFileHints = { title: '', tags: [] };
@@ -1158,7 +1158,7 @@ function getCoachChoices(step) {
   }
   if (step.id === 'family') return ['do it', 'nothing'];
   if (step.id === 'diffusion') return ['route:super-videotheque', 'route:viewer-only', 'project:nom-projet', 'nothing'];
-  if (step.id === 'advanced') return ['do it', 'nothing'];
+  if (step.id === 'source_url') return ['nothing'];
   return [];
 }
 
@@ -1307,10 +1307,12 @@ async function applyCoachTextAnswer(step, rawAnswer) {
     return true;
   }
 
-  if (step.id === 'advanced') {
-    const aiPatch = await requestCoachPatchForStep(step, answer);
-    if (Object.keys(aiPatch).length === 0) return true;
-    applyMetadataPresetValues(aiPatch);
+  if (step.id === 'source_url') {
+    if (!isValidHttpUrl(answer)) {
+      showToast('URL source invalide. Utilise http:// ou https://.', true);
+      return false;
+    }
+    document.getElementById('meta-source-url').value = answer;
     return true;
   }
 
@@ -1364,11 +1366,7 @@ async function applyCoachDoIt(step) {
     return true;
   }
 
-  if (step.id === 'advanced') {
-    const aiPatch = await requestCoachPatchForStep(step, 'Propose des champs avances utiles pour cet upload.');
-    if (Object.keys(aiPatch).length > 0) {
-      applyMetadataPresetValues(aiPatch);
-    }
+  if (step.id === 'source_url') {
     return true;
   }
 
