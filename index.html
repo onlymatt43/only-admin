@@ -456,11 +456,11 @@
           <label>Diffusion</label>
           <div class="route-chips" id="meta-route-chips">
             <button type="button" class="route-chip" data-route="super-videotheque" onclick="toggleRouteChip(this)">🎬 Vidéothèque</button>
-            <button type="button" class="route-chip" data-route="viewer-only" onclick="toggleRouteChip(this)">🌐 Chaud-devant</button>
+            <button type="button" class="route-chip" data-route="viewer-only" onclick="toggleRouteChip(this)">🌐 viewer-only</button>
             <button type="button" id="meta-projects-chip" class="route-chip" onclick="toggleProjectsMode('meta', this)">🧩 Projects</button>
             <div id="meta-dest-project-tags" class="dest-tags" style="display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center"></div>
           </div>
-          <div class="quick-hint">Optionnel. Controle ou le media sera publie: videotheque, chaud-devant, ou un/des projects.</div>
+            <div class="quick-hint">Optionnel. Controle ou le media sera publie: videotheque, viewer-only, ou un/des projects.</div>
           <div id="meta-projects-row" style="display:none;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap">
             <select id="meta-dest-project-input" style="background:#1a1a1a;color:#fff;border:1px solid #333;padding:5px 8px;border-radius:4px;font-size:12px"><option value="">— Ajouter un projet —</option></select>
             <input type="text" id="meta-dest-project-new" placeholder="Nouveau projet (slug)" style="background:#1a1a1a;color:#fff;border:1px solid #333;padding:5px 8px;border-radius:4px;font-size:12px;min-width:200px">
@@ -628,8 +628,6 @@
         <button type="button" class="pill-btn" onclick="applyQuickTag('edit-tags','talking')">talking</button>
         <button type="button" class="pill-btn" onclick="applyQuickTag('edit-tags','9x16')">9x16</button>
         <button type="button" class="pill-btn" onclick="applyQuickTag('edit-tags','16x9')">16x9</button>
-        <button type="button" class="pill-btn" onclick="applyQuickTag('edit-tags','source:bunny-public')">source:bunny-public</button>
-        <button type="button" class="pill-btn" onclick="applyQuickTag('edit-tags','source:bunny-private')">source:bunny-private</button>
       </div>
       <div class="quick-hint">Cmd/Ctrl+S pour sauvegarder rapidement.</div>
     </div>
@@ -649,7 +647,7 @@
       <label>Diffusion</label>
       <div class="route-chips" id="edit-route-chips">
         <button type="button" class="route-chip" data-route="super-videotheque" onclick="toggleRouteChip(this)">🎬 Vidéothèque</button>
-        <button type="button" class="route-chip" data-route="viewer-only" onclick="toggleRouteChip(this)">🌐 Chaud-devant</button>
+        <button type="button" class="route-chip" data-route="viewer-only" onclick="toggleRouteChip(this)">🌐 viewer-only</button>
         <button type="button" id="edit-projects-chip" class="route-chip" onclick="toggleProjectsMode('edit', this)">🧩 Projects</button>
         <div id="edit-dest-project-tags" class="dest-tags" style="display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center"></div>
       </div>
@@ -816,7 +814,7 @@ const COACH_UPLOAD_STEPS = [
   { id: 'description', label: 'Description', question: 'Description courte ?', required: false },
   { id: 'tags', label: 'Tags', question: 'Quels tags ?', required: false },
   { id: 'family', label: 'Famille', question: 'Quelle famille ?', required: false },
-  { id: 'diffusion', label: 'Diffusion', question: 'Ou diffuser ? (videotheque, chaud-devant, project:slug)', required: false },
+  { id: 'diffusion', label: 'Diffusion', question: 'Ou diffuser ? (videotheque, viewer-only, project:slug)', required: false },
   { id: 'advanced', label: 'Avance', question: 'Infos avancees ? (pricing, cta, ordre, etc.)', required: false },
 ];
 let coachUploadStepIndex = 0;
@@ -901,7 +899,7 @@ function renderUploadVisibilityBanner() {
   }
   banner.style.display = 'flex';
   banner.className = `assistant-status ${uploadVideoVisibility.isPrivate ? 'busy' : 'local'}`;
-  banner.textContent = `Vidéos de cette sélection: ${getUploadVideoVisibilityLabel()} (verrouillé)`;
+  banner.textContent = `Vidéos de cette sélection: ${getUploadVideoVisibilityLabel()} (choix confirmé)`;
 }
 
 function renderCoachActionButtons() {
@@ -1302,7 +1300,7 @@ async function applyCoachTextAnswer(step, rawAnswer) {
   if (step.id === 'diffusion') {
     const parsed = parseAssistantPrompt(answer);
     if (!Array.isArray(parsed.route_tags) || parsed.route_tags.length === 0) {
-      showToast('Diffusion: utilise videotheque, chaud-devant ou project:slug.', true);
+      showToast('Diffusion: utilise videotheque, viewer-only ou project:slug.', true);
       return false;
     }
     setRouteTags('meta', parsed.route_tags);
@@ -1710,7 +1708,7 @@ function validateMetadataPresetFields(metadata, options = {}) {
       errors.push('Choisis Private ou Public pour les vidéos avant de continuer.');
     }
   } else if (editingItem?.type === 'video' && !uploadVideoVisibility.locked) {
-    errors.push('La visibilité vidéo doit être verrouillée avant la sauvegarde.');
+    errors.push('Choisis Private ou Public pour cette vidéo avant la sauvegarde.');
   }
 
   if (sourceUrl && !isValidHttpUrl(sourceUrl)) {
@@ -2059,9 +2057,6 @@ function applyTagBoxPayloadToPrefix(prefix, payload = {}, boxSlug = '') {
 
   const formatEl = document.getElementById(`${prefix}-format`);
   if (formatEl && p.format !== undefined) formatEl.value = String(p.format || '16x9');
-
-  const privateEl = document.getElementById(`${prefix}-private`);
-  if (privateEl && p.is_private !== undefined) privateEl.checked = !!p.is_private;
 
   const featuredEl = document.getElementById(`${prefix}-featured`);
   if (featuredEl && p.is_featured !== undefined) featuredEl.checked = !!p.is_featured;
@@ -3112,7 +3107,6 @@ async function applyEditPanelAI() {
     if (patch.lifecycle_stage) document.getElementById('edit-lifecycle-stage').value = patch.lifecycle_stage;
     if (patch.cta_label) document.getElementById('edit-cta-label').value = patch.cta_label;
     if (patch.quality_level) document.getElementById('edit-quality-level').value = patch.quality_level;
-    if (patch.is_private !== undefined) document.getElementById('edit-private').checked = patch.is_private;
     if (patch.is_featured !== undefined) document.getElementById('edit-featured').checked = patch.is_featured;
     if (patch.route_tags && patch.route_tags.length > 0) {
       setRouteTags('edit', [...new Set([...getRouteTags('edit'), ...patch.route_tags])]);
