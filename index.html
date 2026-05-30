@@ -711,7 +711,6 @@
     <div class="form-group full">
       <div class="toggle-row">
         <label><input type="checkbox" id="edit-private"> Privé</label>
-        <label><input type="checkbox" id="edit-locked"> Verrouillé</label>
         <label><input type="checkbox" id="edit-featured"> Featured</label>
       </div>
     </div>
@@ -2970,7 +2969,6 @@ function openEditPanel(id) {
   document.getElementById('edit-dest-project-input').value = '';
   document.getElementById('edit-dest-project-new').value = '';
   document.getElementById('edit-private').checked = !!editingItem.is_private;
-  document.getElementById('edit-locked').checked = !!editingItem.is_locked;
   document.getElementById('edit-featured').checked = !!editingItem.is_featured;
   if (Array.isArray(editingItem.route_tags) && editingItem.route_tags.length > 0) {
     setRouteTags('edit', editingItem.route_tags);
@@ -3037,6 +3035,7 @@ async function doSaveEdit() {
 
   const tags = document.getElementById('edit-tags').value.split(',').map(t => t.trim()).filter(Boolean);
   const routeTags = getRouteTags('edit');
+  const isPrivate = document.getElementById('edit-private').checked;
 
   try {
     await api(`/api/admin-api?action=update&id=${encodeURIComponent(editingItem.id)}`, {
@@ -3057,8 +3056,8 @@ async function doSaveEdit() {
         quality_level: document.getElementById('edit-quality-level').value,
         sort_order: Number(document.getElementById('edit-sort-order').value || 0),
         is_featured: document.getElementById('edit-featured').checked,
-        is_private: document.getElementById('edit-private').checked,
-        is_locked: document.getElementById('edit-locked').checked,
+        is_private: isPrivate,
+        is_locked: isPrivate,
         route_tags: routeTags,
         destinations: routeTags.map(routeTagToLegacyDestination).filter(Boolean),
         social_meta: {

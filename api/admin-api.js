@@ -910,8 +910,12 @@ async function actionUpdate(req, res, db) {
   if (body.duration !== undefined) { fields.push('duration = ?'); values.push(body.duration); }
   if (body.file_size !== undefined) { fields.push('file_size = ?'); values.push(body.file_size); }
 
-  for (const key of ['is_private', 'is_locked']) {
-    if (body[key] !== undefined) { fields.push(`${key} = ?`); values.push(body[key] ? 1 : 0); }
+  if (body.is_private !== undefined || body.is_locked !== undefined) {
+    const accessIsPrivate = body.is_private !== undefined ? body.is_private : body.is_locked;
+    fields.push('is_private = ?');
+    values.push(accessIsPrivate ? 1 : 0);
+    fields.push('is_locked = ?');
+    values.push(accessIsPrivate ? 1 : 0);
   }
 
   for (const key of ['formats', 'social_meta']) {
