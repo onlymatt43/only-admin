@@ -203,17 +203,33 @@ module.exports = async (req, res) => {
     await ensureTable();
     const db = getDb();
 
-    const safeDest = String(dest).replace(/[%_\\]/g, c => `\\${c}`);
-    const routeTag = normalizeRouteTag(`${ROUTE_TAG_PREFIX}${dest}`);
-    const safeRouteTag = routeTag.replace(/[%_\\]/g, c => `\\${c}`);
+    // Phase 2 dual-read: accept both `project:slug` (canonical) and `project-links:slug` (legacy)
+    const destStr = String(dest);
+    const variants = [destStr];
+    if (destStr.startsWith('project:')) {
+      variants.push('project-links:' + destStr.slice('project:'.length));
+    } else if (destStr.startsWith('project-links:')) {
+      variants.push('project:' + destStr.slice('project-links:'.length));
+    }
+
+    const conditions = [];
+    const args = [];
+    for (const variant of variants) {
+      const safeDest = variant.replace(/[%_\\]/g, c => `\\${c}`);
+      const routeTag = normalizeRouteTag(`${ROUTE_TAG_PREFIX}${variant}`);
+      const safeRouteTag = routeTag.replace(/[%_\\]/g, c => `\\${c}`);
+      conditions.push(`(tags LIKE ? ESCAPE '\\')`);
+      conditions.push(`(destinations LIKE ? ESCAPE '\\')`);
+      args.push(`%"${safeRouteTag}"%`, `%"${safeDest}"%`);
+    }
 
     const result = await db.execute({
       sql: `SELECT * FROM media_items
             WHERE status = 'published'
-              AND ((tags LIKE ? ESCAPE '\\') OR (destinations LIKE ? ESCAPE '\\'))
+              AND (${conditions.join(' OR ')})
               AND (duplicate_status IS NULL OR duplicate_status != 'duplicate')
             ORDER BY date_filmed DESC, date_uploaded DESC`,
-      args: [`%"${safeRouteTag}"%`, `%"${safeDest}"%`],
+      args,
     });
 
     const items = result.rows.map(parseRow).map(withRouteFields).map(signPrivateMediaItem);
